@@ -79,8 +79,8 @@ with tab2:
     city_df = df[df['City'] == city].copy().reset_index(drop=True)
 
     # Handle NaN
-    city_df['AQI'] = city_df['AQI'].fillna(method='ffill')
-    city_df['AQI'] = city_df['AQI'].fillna(method='bfill')
+    city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
+    city_df['AQI'] = city_df['AQI'].ffill().bfill()
 
     # Z-score
     city_df['mean'] = city_df['AQI'].rolling(30).mean()
