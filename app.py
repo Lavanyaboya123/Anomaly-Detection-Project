@@ -9,46 +9,49 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 
 from statsmodels.tsa.seasonal import seasonal_decompose
 
-# Optional (safe import)
+# Safe import (Streamlit Cloud fix)
 try:
     from pyod.models.knn import KNN
-    KNN_AVAILABLE = True
+    PYOD_AVAILABLE = True
 except:
-    KNN_AVAILABLE = False
+    PYOD_AVAILABLE = False
 
 # -------------------------------
 # Page Config
 # -------------------------------
 st.set_page_config(page_title="AQI Anomaly Detector", layout="wide")
-
 st.title("🌫️ Advanced Air Quality Anomaly Detection")
 st.markdown("Statistical + Machine Learning Dashboard")
 
 # -------------------------------
-# Upload Data
+# Upload Option
 # -------------------------------
 st.sidebar.header("📁 Upload Data")
-uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
-if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file, parse_dates=['Date'])
-else:
-    df = pd.read_csv('city_day.csv', parse_dates=['Date'])
+uploaded_file = st.sidebar.file_uploader("Upload your CSV", type=["csv"])
 
-# -------------------------------
-# Data Validation
-# -------------------------------
-required_cols = ['City', 'Date', 'AQI']
-
-if not all(col in df.columns for col in required_cols):
-    st.error("Dataset must contain columns: City, Date, AQI")
+try:
+    if uploaded_file is not None:
+        df = pd.read_csv(uploaded_file, parse_dates=['Date'])
+    else:
+        df = pd.read_csv('city_day.csv', parse_dates=['Date'])
+except:
+    st.error("❌ Dataset not found. Please upload CSV.")
     st.stop()
 
+# -------------------------------
+# Clean Data (IMPORTANT FIX)
+# -------------------------------
 df = df.sort_values(['City', 'Date']).reset_index(drop=True)
 
-# Fix AQI values (IMPORTANT)
+# Ensure AQI is numeric
 df['AQI'] = pd.to_numeric(df['AQI'], errors='coerce')
-df['AQI'] = df['AQI'].ffill().bfill()
+
+# Fill missing safely (FIX for your error)
+df['AQI'] = df['AQI'].ffill()
+df['AQI'] = df['AQI'].bfill()
+
+# Drop remaining NaN
 df = df.dropna(subset=['AQI'])
 
 # -------------------------------
@@ -56,7 +59,7 @@ df = df.dropna(subset=['AQI'])
 # -------------------------------
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📈 Trend",
-    "🔍 Detection",
+    "🔍 Anomaly Detection",
     "🤖 Advanced ML",
     "💡 Insights",
     "📊 Summary"
@@ -66,12 +69,10 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 # TAB 1: Trend
 # -------------------------------
 with tab1:
-    city = st.selectbox("Select City", df['City'].unique())
-    city_df = df[df['City'] == city].copy()
+    selected_city = st.selectbox("Select City", df['City'].unique())
+    city_df = df[df['City'] == selected_city].copy()
 
-    col1, col2 = st.columns(2)
-    col1.metric("Total Records", len(city_df))
-    col2.metric("Avg AQI", int(city_df['AQI'].mean()))
+    st.subheader(f"AQI Trend - {selected_city}")
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -80,13 +81,6 @@ with tab1:
         mode='lines',
         name='AQI'
     ))
-
-    fig.update_layout(
-        title=f"AQI Trend - {city}",
-        xaxis_title="Date",
-        yaxis_title="AQI",
-        template="plotly_dark"
-    )
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -100,10 +94,10 @@ with tab1:
         st.pyplot(decomp.plot())
 
 # -------------------------------
-# TAB 2: Isolation Forest
+# TAB 2: Anomaly Detection
 # -------------------------------
 with tab2:
-    st.subheader("🔍 Isolation Forest Detection")
+    st.subheader("🔍 Isolation Forest")
 
     city = st.selectbox("City", df['City'].unique(), key="city2")
     city_df = df[df['City'] == city].copy()
@@ -112,12 +106,11 @@ with tab2:
     scaled = scaler.fit_transform(city_df[['AQI']])
 
     iso = IsolationForest(contamination=0.05, random_state=42)
-    city_df['iso_anomaly'] = iso.fit_predict(scaled) == -1
+    city_df['anomaly'] = iso.fit_predict(scaled)
+    city_df['anomaly'] = city_df['anomaly'] == -1
 
-    st.metric("Detected Anomalies", city_df['iso_anomaly'].sum())
-
+    # Plot
     fig = go.Figure()
-
     fig.add_trace(go.Scatter(
         x=city_df['Date'],
         y=city_df['AQI'],
@@ -126,52 +119,38 @@ with tab2:
     ))
 
     fig.add_trace(go.Scatter(
-        x=city_df[city_df['iso_anomaly']]['Date'],
-        y=city_df[city_df['iso_anomaly']]['AQI'],
+        x=city_df[city_df['anomaly']]['Date'],
+        y=city_df[city_df['anomaly']]['AQI'],
         mode='markers',
-        name='Anomaly',
+        name='Anomalies',
         marker=dict(color='red', size=8)
     ))
 
-    fig.update_layout(
-        title="AQI with Anomalies",
-        xaxis_title="Date",
-        yaxis_title="AQI",
-        template="plotly_dark"
-    )
-
     st.plotly_chart(fig, use_container_width=True)
 
+    # -------------------------------
     # Evaluation
+    # -------------------------------
     threshold = city_df['AQI'].quantile(0.95)
-    city_df['gt'] = city_df['AQI'] > threshold
+    city_df['ground_truth'] = city_df['AQI'] > threshold
 
-    y_true = city_df['gt'].astype(int)
-    y_pred = city_df['iso_anomaly'].astype(int)
+    y_true = city_df['ground_truth'].astype(int)
+    y_pred = city_df['anomaly'].astype(int)
 
-    st.subheader("📊 Model Evaluation")
+    st.subheader("📊 Evaluation")
+
     st.write("Precision:", round(precision_score(y_true, y_pred), 2))
     st.write("Recall:", round(recall_score(y_true, y_pred), 2))
     st.write("F1 Score:", round(f1_score(y_true, y_pred), 2))
 
-    # Explanation
-    st.subheader("🧠 Why Anomalies?")
-    for _, row in city_df[city_df['iso_anomaly']].head(5).iterrows():
-        if row['AQI'] > 300:
-            st.write(f"{row['Date'].date()} → Severe pollution spike")
-        elif row['AQI'] > 200:
-            st.write(f"{row['Date'].date()} → High pollution level")
-        else:
-            st.write(f"{row['Date'].date()} → Sudden variation")
-
 # -------------------------------
-# TAB 3: KNN (Advanced ML)
+# TAB 3: Advanced ML
 # -------------------------------
 with tab3:
-    st.subheader("🤖 KNN Detection")
+    st.subheader("🤖 KNN (PyOD)")
 
-    if not KNN_AVAILABLE:
-        st.warning("KNN not available (PyOD not installed)")
+    if not PYOD_AVAILABLE:
+        st.warning("⚠️ PyOD not installed. Skipping KNN.")
     else:
         city = st.selectbox("City", df['City'].unique(), key="city3")
         city_df = df[df['City'] == city].copy()
@@ -180,24 +159,9 @@ with tab3:
         scaled = scaler.fit_transform(city_df[['AQI']])
 
         knn = KNN(contamination=0.05)
-        preds = knn.fit_predict(scaled)
+        city_df['knn'] = knn.fit_predict(scaled) == 1
 
-        city_df['knn_anomaly'] = preds == 1
-
-        st.metric("KNN Anomalies", city_df['knn_anomaly'].sum())
-
-        # Comparison
-        st.subheader("📊 Model Comparison")
-
-        comparison = pd.DataFrame({
-            "Model": ["Isolation Forest", "KNN"],
-            "Anomalies": [
-                city_df['iso_anomaly'].sum() if 'iso_anomaly' in city_df else 0,
-                city_df['knn_anomaly'].sum()
-            ]
-        })
-
-        st.dataframe(comparison)
+        st.write(f"Detected anomalies: {city_df['knn'].sum()}")
 
 # -------------------------------
 # TAB 4: Insights
@@ -206,18 +170,10 @@ with tab4:
     st.subheader("💡 Insights")
 
     st.markdown("""
-    - Delhi shows higher pollution spikes in winter
-    - Hyderabad shows more stable AQI trends
-    - Isolation Forest detects pattern anomalies
-    - KNN detects density-based anomalies
-    """)
-
-    st.subheader("🌍 Real World Impact")
-    st.markdown("""
-    - Early pollution spike detection
-    - Smart city monitoring
-    - Environmental risk alerts
-    - Government policy insights
+    - Delhi shows high winter pollution spikes  
+    - Hyderabad has moderate anomalies  
+    - Isolation Forest detects pattern anomalies  
+    - KNN detects density anomalies  
     """)
 
 # -------------------------------
@@ -227,20 +183,20 @@ with tab5:
     st.subheader("📊 Project Summary")
 
     st.markdown("""
-    ### 🔍 Objective
-    Detect anomalies in air quality data
+    ### 🔍 Project
+    Detect anomalies in air quality time-series data
 
-    ### 🧠 Techniques
+    ### 🧠 Methods
+    - Statistical cleaning
     - Isolation Forest
     - KNN (PyOD)
 
     ### 🚀 Features
     - Interactive dashboard
-    - Model evaluation
-    - Upload custom dataset
+    - Evaluation metrics
+    - Upload your dataset
 
     ### 🌍 Use Cases
-    - Air pollution monitoring
     - Smart cities
-    - Environmental analytics
+    - Pollution monitoring
     """)
