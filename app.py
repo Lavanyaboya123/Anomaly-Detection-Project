@@ -9,7 +9,7 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 
 from statsmodels.tsa.seasonal import seasonal_decompose
 
-# Safe import for PyOD
+# Safe PyOD import
 try:
     from pyod.models.knn import KNN
     pyod_available = True
@@ -17,192 +17,191 @@ except:
     pyod_available = False
 
 # -------------------------------
-# Page Config
+# PAGE CONFIG
 # -------------------------------
 st.set_page_config(page_title="AQI Anomaly Detector", layout="wide")
+
 st.title("🌫️ Advanced Air Quality Anomaly Detection")
-st.markdown("Statistical + Machine Learning")
+st.markdown("Interactive Dashboard | Statistical + ML")
 
 # -------------------------------
-# Upload Option
+# SIDEBAR
 # -------------------------------
-st.sidebar.header("📁 Upload Data")
+st.sidebar.title("⚙️ Settings")
 
-uploaded_file = st.sidebar.file_uploader("Upload your CSV", type=["csv"])
+uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
-if uploaded_file is not None:
+if uploaded_file:
     df = pd.read_csv(uploaded_file, parse_dates=['Date'])
 else:
-    df = pd.read_csv('city_day.csv', parse_dates=['Date'])
+    df = pd.read_csv("city_day.csv", parse_dates=['Date'])
 
 df = df.sort_values(['City', 'Date']).reset_index(drop=True)
 
-# -------------------------------
-# Tabs
-# -------------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📈 Trend & EDA",
-    "🔍 Anomaly Detection",
-    "🤖 ML Advanced",
-    "💡 Insights",
-    "📊 Summary"
-])
+city = st.sidebar.selectbox("Select City", df['City'].unique())
+
+city_df = df[df['City'] == city].copy()
 
 # -------------------------------
-# TAB 1: Trend
+# CLEAN DATA
 # -------------------------------
-with tab1:
-    selected_city = st.selectbox("Select City", df['City'].unique())
-    city_df = df[df['City'] == selected_city].copy()
+city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
+city_df['AQI'] = city_df['AQI'].ffill().bfill()
 
-    # ✅ FIXED NaN handling
-    city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
-    city_df['AQI'] = city_df['AQI'].ffill().bfill()
+# Date Filter
+start_date, end_date = st.sidebar.date_input(
+    "Date Range",
+    [city_df['Date'].min(), city_df['Date'].max()]
+)
 
-    st.subheader(f"AQI Trend - {selected_city}")
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=city_df['Date'],
-        y=city_df['AQI'],
-        mode='lines',
-        name='AQI'
-    ))
-    st.plotly_chart(fig, use_container_width=True)
-
-    # Seasonal decomposition
-    if len(city_df) > 365:
-        st.subheader("Seasonal Decomposition")
-        try:
-            decomp = seasonal_decompose(
-                city_df.set_index('Date')['AQI'],
-                model='additive',
-                period=365
-            )
-            fig2 = decomp.plot()
-            fig2.set_size_inches(12, 8)
-            st.pyplot(fig2)
-        except:
-            st.warning("Not enough data for decomposition")
+city_df = city_df[
+    (city_df['Date'] >= pd.to_datetime(start_date)) &
+    (city_df['Date'] <= pd.to_datetime(end_date))
+]
 
 # -------------------------------
-# TAB 2: Anomaly Detection
+# KPI DASHBOARD
 # -------------------------------
-with tab2:
-    st.subheader("🔍 Anomaly Detection")
+col1, col2, col3 = st.columns(3)
 
-    city = st.selectbox("City", df['City'].unique(), key="city2")
-    city_df = df[df['City'] == city].copy().reset_index(drop=True)
-
-    # ✅ FIXED NaN handling
-    city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
-    city_df['AQI'] = city_df['AQI'].ffill().bfill()
-
-    # Z-score
-    city_df['mean'] = city_df['AQI'].rolling(30).mean()
-    city_df['std'] = city_df['AQI'].rolling(30).std()
-    city_df['z'] = (city_df['AQI'] - city_df['mean']) / city_df['std']
-    city_df['z_anomaly'] = np.abs(city_df['z']) > 3
-
-    # Isolation Forest
-    scaler = StandardScaler()
-    scaled = scaler.fit_transform(city_df[['AQI']])
-
-    iso = IsolationForest(contamination=0.05, random_state=42)
-    city_df['iso_anomaly'] = iso.fit_predict(scaled) == -1
-
-    # Plot
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=city_df['Date'],
-        y=city_df['AQI'],
-        mode='lines',
-        name='AQI'
-    ))
-
-    fig.add_trace(go.Scatter(
-        x=city_df[city_df['iso_anomaly']]['Date'],
-        y=city_df[city_df['iso_anomaly']]['AQI'],
-        mode='markers',
-        name='Isolation Forest',
-        marker=dict(color='red', size=8)
-    ))
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # -------------------------------
-    # Evaluation
-    # -------------------------------
-    threshold_gt = city_df['AQI'].quantile(0.95)
-    city_df['ground_truth'] = city_df['AQI'] > threshold_gt
-
-    y_true = city_df['ground_truth'].astype(int)
-    y_pred = city_df['iso_anomaly'].astype(int)
-
-    precision = precision_score(y_true, y_pred, zero_division=0)
-    recall = recall_score(y_true, y_pred, zero_division=0)
-    f1 = f1_score(y_true, y_pred, zero_division=0)
-
-    st.subheader("📊 Model Evaluation")
-    st.write(f"Precision: {precision:.2f}")
-    st.write(f"Recall: {recall:.2f}")
-    st.write(f"F1 Score: {f1:.2f}")
+col1.metric("Total Records", len(city_df))
+col2.metric("Max AQI", int(city_df['AQI'].max()))
+col3.metric("Avg AQI", f"{city_df['AQI'].mean():.2f}")
 
 # -------------------------------
-# TAB 3: Advanced ML
+# Z-SCORE
 # -------------------------------
-with tab3:
-    st.subheader("🤖 Advanced ML")
+threshold = st.slider("Z-score Threshold", 1.0, 5.0, 3.0)
 
-    if not pyod_available:
-        st.warning("PyOD not installed. Add `pyod` in requirements.txt")
-    else:
-        city = st.selectbox("City", df['City'].unique(), key="city3")
-        city_df = df[df['City'] == city].copy()
-
-        # ✅ FIXED NaN handling
-        city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
-        city_df['AQI'] = city_df['AQI'].ffill().bfill()
-
-        scaler = StandardScaler()
-        scaled = scaler.fit_transform(city_df[['AQI']])
-
-        knn = KNN(contamination=0.05)
-        city_df['knn_anomaly'] = knn.fit_predict(scaled) == 1
-
-        st.write(f"KNN Detected: {city_df['knn_anomaly'].sum()} anomalies")
+city_df['mean'] = city_df['AQI'].rolling(30).mean()
+city_df['std'] = city_df['AQI'].rolling(30).std()
+city_df['z'] = (city_df['AQI'] - city_df['mean']) / city_df['std']
+city_df['z_anomaly'] = np.abs(city_df['z']) > threshold
 
 # -------------------------------
-# TAB 4: Insights
+# ISOLATION FOREST
 # -------------------------------
-with tab4:
-    st.subheader("💡 Insights")
-    st.markdown("""
-    - Delhi shows high pollution anomalies in winter
-    - Hyderabad has fewer anomalies
-    - Isolation Forest detects pattern-based anomalies
-    - KNN detects density-based anomalies
-    """)
+scaler = StandardScaler()
+scaled = scaler.fit_transform(city_df[['AQI']])
+
+iso = IsolationForest(contamination=0.05, random_state=42)
+city_df['iso_anomaly'] = iso.fit_predict(scaled) == -1
 
 # -------------------------------
-# TAB 5: Summary
+# MAIN GRAPH (COMPARISON)
 # -------------------------------
-with tab5:
-    st.subheader("📊 Project Summary")
-    st.markdown("""
-    ### 🔍 What this project does:
-    Detects anomalies in AQI time series data
+st.subheader("📈 AQI Trend with Anomalies")
 
-    ### 🧠 Techniques used:
-    - Statistical (Z-score)
-    - Machine Learning (Isolation Forest, KNN)
+fig = go.Figure()
 
-    ### 🚀 Features:
-    - Interactive dashboard
-    - Model evaluation
-    - Upload dataset
+fig.add_trace(go.Scatter(
+    x=city_df['Date'], y=city_df['AQI'],
+    mode='lines', name='AQI'
+))
 
-    ### 🌍 Use cases:
-    - Air pollution monitoring
-    - Smart cities
-    """)
+# Isolation Forest
+fig.add_trace(go.Scatter(
+    x=city_df[city_df['iso_anomaly']]['Date'],
+    y=city_df[city_df['iso_anomaly']]['AQI'],
+    mode='markers',
+    name='Isolation Forest',
+    marker=dict(color='red', size=8)
+))
+
+# Z-score
+fig.add_trace(go.Scatter(
+    x=city_df[city_df['z_anomaly']]['Date'],
+    y=city_df[city_df['z_anomaly']]['AQI'],
+    mode='markers',
+    name='Z-score',
+    marker=dict(color='orange', size=6)
+))
+
+fig.update_layout(height=500)
+st.plotly_chart(fig, use_container_width=True)
+
+# -------------------------------
+# DISTRIBUTION
+# -------------------------------
+st.subheader("📊 AQI Distribution")
+
+hist = go.Figure()
+hist.add_trace(go.Histogram(x=city_df['AQI'], nbinsx=50))
+st.plotly_chart(hist, use_container_width=True)
+
+# -------------------------------
+# MODEL COMPARISON
+# -------------------------------
+st.subheader("📊 Model Comparison")
+
+comparison = pd.DataFrame({
+    'Method': ['Z-score', 'Isolation Forest'],
+    'Anomalies': [
+        city_df['z_anomaly'].sum(),
+        city_df['iso_anomaly'].sum()
+    ]
+})
+
+bar = go.Figure([go.Bar(
+    x=comparison['Method'],
+    y=comparison['Anomalies']
+)])
+
+st.plotly_chart(bar, use_container_width=True)
+
+# -------------------------------
+# EVALUATION
+# -------------------------------
+st.subheader("📊 Evaluation")
+
+threshold_gt = city_df['AQI'].quantile(0.95)
+city_df['ground_truth'] = city_df['AQI'] > threshold_gt
+
+y_true = city_df['ground_truth'].astype(int)
+y_pred = city_df['iso_anomaly'].astype(int)
+
+precision = precision_score(y_true, y_pred, zero_division=0)
+recall = recall_score(y_true, y_pred, zero_division=0)
+f1 = f1_score(y_true, y_pred, zero_division=0)
+
+st.write(f"Precision: {precision:.2f}")
+st.write(f"Recall: {recall:.2f}")
+st.write(f"F1 Score: {f1:.2f}")
+
+# -------------------------------
+# KNN (OPTIONAL)
+# -------------------------------
+if pyod_available:
+    st.subheader("🤖 KNN (Advanced ML)")
+
+    knn = KNN(contamination=0.05)
+    city_df['knn_anomaly'] = knn.fit_predict(scaled) == 1
+
+    st.write(f"KNN Detected: {city_df['knn_anomaly'].sum()} anomalies")
+else:
+    st.warning("Install pyod to enable KNN")
+
+# -------------------------------
+# INSIGHTS
+# -------------------------------
+st.subheader("💡 Insights")
+
+st.markdown(f"""
+- Total anomalies: **{city_df['iso_anomaly'].sum()}**
+- Peak AQI: **{city_df['AQI'].max()}**
+- Average AQI: **{city_df['AQI'].mean():.2f}**
+
+### Observations:
+- High spikes indicate pollution events
+- Seasonal patterns visible
+- ML detects hidden anomalies better than statistical methods
+""")
+
+# -------------------------------
+# DOWNLOAD
+# -------------------------------
+st.download_button(
+    "📥 Download Results",
+    city_df.to_csv(index=False),
+    file_name="anomaly_results.csv"
+)
