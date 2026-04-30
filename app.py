@@ -14,8 +14,8 @@ try:
 except:
     pyod_available = False
 
-st.set_page_config(page_title="AQI Anomaly Detector", layout="wide")
-st.title("🌫️ Advanced Air Quality Anomaly Detection")
+st.set_page_config(page_title="AQI App", layout="wide")
+st.title("🌫️ AQI Anomaly Detection")
 
 # -------------------------------
 # LOAD DATA
@@ -32,15 +32,16 @@ df = load_data(uploaded_file)
 df = df.sort_values(['City', 'Date']).reset_index(drop=True)
 
 # -------------------------------
-# SINGLE CITY PIPELINE (🔥 FIX)
+# 🔥 SINGLE PIPELINE (IMPORTANT)
 # -------------------------------
 selected_city = st.sidebar.selectbox("Select City", df['City'].unique())
+
 city_df = df[df['City'] == selected_city].copy()
 
 city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
 city_df['AQI'] = city_df['AQI'].ffill().bfill()
 
-# rolling safely
+# Rolling safely
 city_df['mean'] = city_df['AQI'].rolling(30, min_periods=10).mean()
 city_df['std'] = city_df['AQI'].rolling(30, min_periods=10).std()
 
@@ -54,37 +55,20 @@ scaled = scaler.fit_transform(city_df[['AQI']])
 iso = IsolationForest(contamination=0.05, random_state=42)
 city_df['iso_anomaly'] = iso.fit_predict(scaled) == -1
 
-# severity + reason
-def severity(aqi):
-    if aqi > 300: return "High"
-    elif aqi > 200: return "Medium"
-    else: return "Low"
-
-def reason(aqi, z):
-    if aqi > 300: return "Severe spike"
-    elif aqi > 200: return "High pollution"
-    elif z < -3: return "Sudden drop"
-    else: return "Unusual variation"
-
-city_df['severity'] = city_df['AQI'].apply(severity)
-city_df['reason'] = city_df.apply(lambda r: reason(r['AQI'], r['z']), axis=1)
-
 # -------------------------------
 # TABS
 # -------------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "📈 Trend",
     "🔍 Anomaly",
     "🤖 ML",
-    "💡 Insights",
-    "📊 Summary"
+    "💡 Insights"
 ])
 
 # -------------------------------
 # TAB 1
 # -------------------------------
 with tab1:
-    st.subheader(f"AQI Trend - {selected_city}")
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=city_df['Date'], y=city_df['AQI']))
     st.plotly_chart(fig, use_container_width=True)
@@ -93,10 +77,12 @@ with tab1:
 # TAB 2
 # -------------------------------
 with tab2:
-    st.subheader("Anomaly Detection")
-
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=city_df['Date'], y=city_df['AQI']))
+
+    fig.add_trace(go.Scatter(
+        x=city_df['Date'],
+        y=city_df['AQI']
+    ))
 
     anomalies = city_df[city_df['iso_anomaly']]
 
@@ -104,9 +90,7 @@ with tab2:
         x=anomalies['Date'],
         y=anomalies['AQI'],
         mode='markers',
-        marker=dict(color='red', size=8),
-        text=anomalies['reason'],
-        hovertemplate="Date:%{x}<br>%{text}<extra></extra>"
+        marker=dict(color='red', size=8)
     ))
 
     st.plotly_chart(fig, use_container_width=True)
@@ -115,8 +99,6 @@ with tab2:
 # TAB 3
 # -------------------------------
 with tab3:
-    st.subheader("ML Results")
-
     st.write("Isolation Forest:", city_df['iso_anomaly'].sum())
     st.write("Z-score:", city_df['z_anomaly'].sum())
 
@@ -129,8 +111,6 @@ with tab3:
 # TAB 4
 # -------------------------------
 with tab4:
-    st.subheader("Insights")
-
     avg = city_df['AQI'].mean()
     max_val = city_df['AQI'].max()
 
@@ -139,16 +119,10 @@ with tab4:
     st.write(f"Anomalies: {city_df['iso_anomaly'].sum()}")
 
     if max_val > 300:
-        st.error("Severe spikes 🚨")
+        st.error("Severe pollution 🚨")
     elif avg > 200:
         st.error("Unhealthy")
     elif avg > 100:
         st.warning("Moderate")
     else:
         st.success("Good")
-
-# -------------------------------
-# TAB 5
-# -------------------------------
-with tab5:
-    st.write("Project summary: anomaly detection using ML + stats")
