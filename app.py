@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 # CONFIG
 # -------------------------------
 st.set_page_config(page_title="AQI Dashboard", layout="wide")
-st.title("🌫️ AQI Anomaly Detection Dashboard (Final Smart Version)")
+st.title("🌫️ AQI Anomaly Detection Dashboard (Final Version)")
 
 # -------------------------------
 # LOAD DATA
@@ -44,7 +44,7 @@ city_df = df[df['City'] == selected_city].copy()
 city_df['AQI'] = city_df['AQI'].interpolate()
 
 # -------------------------------
-# TREND
+# AQI TREND
 # -------------------------------
 st.subheader(f"📈 AQI Trend - {selected_city}")
 
@@ -77,7 +77,7 @@ iso = IsolationForest(contamination=0.05, random_state=42)
 detect_df['iso_anomaly'] = iso.fit_predict(scaled) == -1
 
 # -------------------------------
-# SEVERITY + EXPLANATION
+# SEVERITY + REASON
 # -------------------------------
 def get_severity(aqi):
     if aqi > 300:
@@ -101,11 +101,16 @@ detect_df['severity'] = detect_df['AQI'].apply(get_severity)
 detect_df['reason'] = detect_df.apply(lambda r: get_reason(r['AQI'], r['z']), axis=1)
 
 # -------------------------------
-# DECOMPOSITION
+# SEASONAL DECOMPOSITION (FIXED)
 # -------------------------------
 st.subheader("📊 Seasonal Decomposition + Anomalies")
 
 ts_df = city_df.set_index('Date')
+
+# 🔥 FIX: remove missing values properly
+ts_df = ts_df[['AQI']]
+ts_df['AQI'] = ts_df['AQI'].ffill().bfill()
+ts_df = ts_df.dropna()
 
 if len(ts_df) > 365:
 
@@ -119,7 +124,7 @@ if len(ts_df) > 365:
         'Residual': result.resid
     }).dropna()
 
-    # SAFE MERGE (NO ERROR)
+    # 🔥 SAFE MERGE (NO KEYERROR)
     merged = pd.merge(
         decomp_df,
         detect_df[['Date', 'iso_anomaly', 'severity', 'reason']],
@@ -137,12 +142,11 @@ if len(ts_df) > 365:
 
     # Observed
     fig2.add_trace(go.Scatter(
-        x=merged['Date'],
-        y=merged['Observed'],
+        x=merged['Date'], y=merged['Observed'],
         name='AQI'
     ), row=1, col=1)
 
-    # Anomalies with hover
+    # Anomalies
     anomalies = merged[merged['iso_anomaly']]
 
     fig2.add_trace(go.Scatter(
@@ -172,6 +176,9 @@ if len(ts_df) > 365:
     fig2.update_layout(height=900)
 
     st.plotly_chart(fig2, use_container_width=True)
+
+else:
+    st.warning("Not enough data for decomposition")
 
 # -------------------------------
 # ANOMALY GRAPH
@@ -206,10 +213,8 @@ st.plotly_chart(fig3, use_container_width=True)
 # -------------------------------
 st.subheader("🧠 Anomaly Explanation")
 
-top_anomalies = detect_df[detect_df['iso_anomaly']].head(5)
-
-for _, row in top_anomalies.iterrows():
-    st.write(f"📅 {row['Date'].date()} → {row['reason']} (Severity: {row['severity']})")
+for _, row in detect_df[detect_df['iso_anomaly']].head(5).iterrows():
+    st.write(f"{row['Date'].date()} → {row['reason']} (Severity: {row['severity']})")
 
 # -------------------------------
 # INSIGHTS
