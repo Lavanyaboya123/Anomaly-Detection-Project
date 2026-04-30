@@ -4,274 +4,205 @@ import numpy as np
 import plotly.graph_objects as go
 
 from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import precision_score, recall_score, f1_score
 
-from pyod.models.knn import KNN
+from statsmodels.tsa.seasonal import seasonal_decompose
 
-# -------------------------------
-# TensorFlow Safe Import
-# -------------------------------
+# Safe import for PyOD
 try:
-    from tensorflow.keras.models import Sequential
-    from tensorflow.keras.layers import LSTM, Dense, RepeatVector, TimeDistributed
-    TF_AVAILABLE = True
+    from pyod.models.knn import KNN
+    pyod_available = True
 except:
-    TF_AVAILABLE = False
+    pyod_available = False
 
 # -------------------------------
-# PAGE CONFIG
+# Page Config
 # -------------------------------
 st.set_page_config(page_title="AQI Anomaly Detector", layout="wide")
 st.title("🌫️ Advanced Air Quality Anomaly Detection")
+st.markdown("Statistical + Machine Learning")
 
 # -------------------------------
-# LOAD DATA
+# Upload Option
 # -------------------------------
-uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
+st.sidebar.header("📁 Upload Data")
 
-if uploaded_file:
+uploaded_file = st.sidebar.file_uploader("Upload your CSV", type=["csv"])
+
+if uploaded_file is not None:
     df = pd.read_csv(uploaded_file, parse_dates=['Date'])
 else:
-    df = pd.read_csv("city_day.csv", parse_dates=['Date'])
+    df = pd.read_csv('city_day.csv', parse_dates=['Date'])
+
+df = df.sort_values(['City', 'Date']).reset_index(drop=True)
 
 # -------------------------------
-# CLEAN DATA
+# Tabs
 # -------------------------------
-df = df.sort_values(['City', 'Date'])
-df['AQI'] = pd.to_numeric(df['AQI'], errors='coerce')
-df = df.dropna(subset=['AQI'])
-
-# -------------------------------
-# GLOBAL CITY SELECT
-# -------------------------------
-selected_city = st.sidebar.selectbox("Select City", df['City'].unique())
-
-base_df = df[df['City'] == selected_city].copy()
-base_df = base_df.sort_values('Date')
-base_df['AQI'] = base_df['AQI'].ffill().bfill()
-
-# -------------------------------
-# CREATE SEPARATE DATAFRAMES
-# -------------------------------
-
-# Trend
-trend_df = base_df.copy()
-trend_df['rolling'] = trend_df['AQI'].rolling(30).mean()
-trend_df = trend_df.dropna().reset_index(drop=True)
-
-# Detection
-detect_df = base_df.copy()
-detect_df['mean'] = detect_df['AQI'].rolling(30).mean()
-detect_df['std'] = detect_df['AQI'].rolling(30).std()
-
-detect_df['z'] = (detect_df['AQI'] - detect_df['mean']) / detect_df['std']
-detect_df['z'] = detect_df['z'].replace([np.inf, -np.inf], np.nan)
-detect_df['z'] = detect_df['z'].fillna(0)
-
-detect_df['z_anomaly'] = np.abs(detect_df['z']) > 3
-detect_df = detect_df.dropna().reset_index(drop=True)
-
-# Isolation Forest
-model_df = detect_df.copy()
-scaler = StandardScaler()
-scaled = scaler.fit_transform(model_df[['AQI']])
-
-iso = IsolationForest(contamination=0.05, random_state=42)
-model_df['iso_anomaly'] = iso.fit_predict(scaled) == -1
-
-# KNN
-df3 = base_df.copy()
-scaled_knn = scaler.fit_transform(df3[['AQI']])
-knn = KNN(contamination=0.05)
-df3['knn_anomaly'] = knn.fit_predict(scaled_knn) == 1
-
-# -------------------------------
-# LSTM PREP
-# -------------------------------
-df_lstm = None
-
-if TF_AVAILABLE:
-    data = base_df[['AQI']].values
-    scaler_lstm = MinMaxScaler()
-    data_scaled = scaler_lstm.fit_transform(data)
-
-    def create_sequences(data, seq_len=30):
-        sequences = []
-        for i in range(len(data) - seq_len):
-            sequences.append(data[i:i+seq_len])
-        return np.array(sequences)
-
-    seq_len = 30
-    X = create_sequences(data_scaled, seq_len)
-
-    if len(X) > 50:
-        model = Sequential([
-            LSTM(64, activation='relu', input_shape=(seq_len, 1)),
-            RepeatVector(seq_len),
-            LSTM(64, activation='relu', return_sequences=True),
-            TimeDistributed(Dense(1))
-        ])
-
-        model.compile(optimizer='adam', loss='mse')
-        model.fit(X, X, epochs=3, batch_size=32, verbose=0)
-
-        X_pred = model.predict(X)
-        mse = np.mean(np.power(X - X_pred, 2), axis=(1,2))
-
-        threshold = np.percentile(mse, 95)
-        anomalies = mse > threshold
-
-        df_lstm = base_df.iloc[seq_len:].copy()
-        df_lstm['lstm_anomaly'] = anomalies
-
-# -------------------------------
-# TABS
-# -------------------------------
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "📈 Trend",
-    "🔍 Detection",
-    "🤖 KNN",
-    "🧠 LSTM",
-    "📊 Compare Models",
-    "💡 Insights"
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📈 Trend & EDA",
+    "🔍 Anomaly Detection",
+    "🤖 ML Advanced",
+    "💡 Insights",
+    "📊 Summary"
 ])
 
 # -------------------------------
-# TAB 1
+# TAB 1: Trend
 # -------------------------------
 with tab1:
+    selected_city = st.selectbox("Select City", df['City'].unique())
+    city_df = df[df['City'] == selected_city].copy()
+
+    # ✅ FIXED NaN handling
+    city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
+    city_df['AQI'] = city_df['AQI'].ffill().bfill()
+
+    st.subheader(f"AQI Trend - {selected_city}")
+
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=trend_df['Date'], y=trend_df['AQI'], name='AQI'))
-    fig.add_trace(go.Scatter(x=trend_df['Date'], y=trend_df['rolling'], name='30-day Avg'))
+    fig.add_trace(go.Scatter(
+        x=city_df['Date'],
+        y=city_df['AQI'],
+        mode='lines',
+        name='AQI'
+    ))
     st.plotly_chart(fig, use_container_width=True)
 
+    # Seasonal decomposition
+    if len(city_df) > 365:
+        st.subheader("Seasonal Decomposition")
+        try:
+            decomp = seasonal_decompose(
+                city_df.set_index('Date')['AQI'],
+                model='additive',
+                period=365
+            )
+            fig2 = decomp.plot()
+            fig2.set_size_inches(12, 8)
+            st.pyplot(fig2)
+        except:
+            st.warning("Not enough data for decomposition")
+
 # -------------------------------
-# TAB 2
+# TAB 2: Anomaly Detection
 # -------------------------------
 with tab2:
+    st.subheader("🔍 Anomaly Detection")
+
+    city = st.selectbox("City", df['City'].unique(), key="city2")
+    city_df = df[df['City'] == city].copy().reset_index(drop=True)
+
+    # ✅ FIXED NaN handling
+    city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
+    city_df['AQI'] = city_df['AQI'].ffill().bfill()
+
+    # Z-score
+    city_df['mean'] = city_df['AQI'].rolling(30).mean()
+    city_df['std'] = city_df['AQI'].rolling(30).std()
+    city_df['z'] = (city_df['AQI'] - city_df['mean']) / city_df['std']
+    city_df['z_anomaly'] = np.abs(city_df['z']) > 3
+
+    # Isolation Forest
+    scaler = StandardScaler()
+    scaled = scaler.fit_transform(city_df[['AQI']])
+
+    iso = IsolationForest(contamination=0.05, random_state=42)
+    city_df['iso_anomaly'] = iso.fit_predict(scaled) == -1
+
+    # Plot
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=model_df['Date'], y=model_df['AQI'], name='AQI'))
-
     fig.add_trace(go.Scatter(
-        x=model_df[model_df['iso_anomaly']]['Date'],
-        y=model_df[model_df['iso_anomaly']]['AQI'],
-        mode='markers',
-        name='Isolation Forest',
-        marker=dict(color='red')
+        x=city_df['Date'],
+        y=city_df['AQI'],
+        mode='lines',
+        name='AQI'
     ))
 
     fig.add_trace(go.Scatter(
-        x=model_df[model_df['z_anomaly']]['Date'],
-        y=model_df[model_df['z_anomaly']]['AQI'],
-        mode='markers',
-        name='Z-score',
-        marker=dict(color='orange')
-    ))
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    threshold = model_df['AQI'].quantile(0.95)
-    model_df['gt'] = model_df['AQI'] > threshold
-
-    st.write("Precision:", precision_score(model_df['gt'], model_df['iso_anomaly']))
-    st.write("Recall:", recall_score(model_df['gt'], model_df['iso_anomaly']))
-    st.write("F1:", f1_score(model_df['gt'], model_df['iso_anomaly']))
-
-# -------------------------------
-# TAB 3
-# -------------------------------
-with tab3:
-    st.write("KNN anomalies:", df3['knn_anomaly'].sum())
-
-# -------------------------------
-# TAB 4
-# -------------------------------
-with tab4:
-    if df_lstm is not None:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df_lstm['Date'], y=df_lstm['AQI'], name='AQI'))
-
-        fig.add_trace(go.Scatter(
-            x=df_lstm[df_lstm['lstm_anomaly']]['Date'],
-            y=df_lstm[df_lstm['lstm_anomaly']]['AQI'],
-            mode='markers',
-            name='LSTM',
-            marker=dict(color='purple')
-        ))
-
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("LSTM not available")
-
-# -------------------------------
-# TAB 5 (🔥 BEST PART)
-# -------------------------------
-with tab5:
-    fig = go.Figure()
-
-    fig.add_trace(go.Scatter(
-        x=base_df['Date'],
-        y=base_df['AQI'],
-        name='AQI',
-        line=dict(color='blue')
-    ))
-
-    fig.add_trace(go.Scatter(
-        x=model_df[model_df['iso_anomaly']]['Date'],
-        y=model_df[model_df['iso_anomaly']]['AQI'],
+        x=city_df[city_df['iso_anomaly']]['Date'],
+        y=city_df[city_df['iso_anomaly']]['AQI'],
         mode='markers',
         name='Isolation Forest',
         marker=dict(color='red', size=8)
     ))
 
-    fig.add_trace(go.Scatter(
-        x=model_df[model_df['z_anomaly']]['Date'],
-        y=model_df[model_df['z_anomaly']]['AQI'],
-        mode='markers',
-        name='Z-score',
-        marker=dict(color='orange', size=6)
-    ))
-
-    fig.add_trace(go.Scatter(
-        x=df3[df3['knn_anomaly']]['Date'],
-        y=df3[df3['knn_anomaly']]['AQI'],
-        mode='markers',
-        name='KNN',
-        marker=dict(color='green', size=7)
-    ))
-
-    if df_lstm is not None:
-        fig.add_trace(go.Scatter(
-            x=df_lstm[df_lstm['lstm_anomaly']]['Date'],
-            y=df_lstm[df_lstm['lstm_anomaly']]['AQI'],
-            mode='markers',
-            name='LSTM',
-            marker=dict(color='purple', size=9)
-        ))
-
     st.plotly_chart(fig, use_container_width=True)
 
+    # -------------------------------
+    # Evaluation
+    # -------------------------------
+    threshold_gt = city_df['AQI'].quantile(0.95)
+    city_df['ground_truth'] = city_df['AQI'] > threshold_gt
+
+    y_true = city_df['ground_truth'].astype(int)
+    y_pred = city_df['iso_anomaly'].astype(int)
+
+    precision = precision_score(y_true, y_pred, zero_division=0)
+    recall = recall_score(y_true, y_pred, zero_division=0)
+    f1 = f1_score(y_true, y_pred, zero_division=0)
+
+    st.subheader("📊 Model Evaluation")
+    st.write(f"Precision: {precision:.2f}")
+    st.write(f"Recall: {recall:.2f}")
+    st.write(f"F1 Score: {f1:.2f}")
+
+# -------------------------------
+# TAB 3: Advanced ML
+# -------------------------------
+with tab3:
+    st.subheader("🤖 Advanced ML")
+
+    if not pyod_available:
+        st.warning("PyOD not installed. Add `pyod` in requirements.txt")
+    else:
+        city = st.selectbox("City", df['City'].unique(), key="city3")
+        city_df = df[df['City'] == city].copy()
+
+        # ✅ FIXED NaN handling
+        city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
+        city_df['AQI'] = city_df['AQI'].ffill().bfill()
+
+        scaler = StandardScaler()
+        scaled = scaler.fit_transform(city_df[['AQI']])
+
+        knn = KNN(contamination=0.05)
+        city_df['knn_anomaly'] = knn.fit_predict(scaled) == 1
+
+        st.write(f"KNN Detected: {city_df['knn_anomaly'].sum()} anomalies")
+
+# -------------------------------
+# TAB 4: Insights
+# -------------------------------
+with tab4:
+    st.subheader("💡 Insights")
     st.markdown("""
-    ### 🧠 Model Insights
-    - Isolation Forest → global anomalies  
-    - Z-score → statistical spikes  
-    - KNN → density-based anomalies  
-    - LSTM → time pattern anomalies  
+    - Delhi shows high pollution anomalies in winter
+    - Hyderabad has fewer anomalies
+    - Isolation Forest detects pattern-based anomalies
+    - KNN detects density-based anomalies
     """)
 
 # -------------------------------
-# TAB 6
+# TAB 5: Summary
 # -------------------------------
-with tab6:
-    recent = base_df.tail(30)
-    avg = recent['AQI'].mean()
+with tab5:
+    st.subheader("📊 Project Summary")
+    st.markdown("""
+    ### 🔍 What this project does:
+    Detects anomalies in AQI time series data
 
-    if avg > 200:
-        st.error("Severe pollution")
-    elif avg > 100:
-        st.warning("Moderate pollution")
-    else:
-        st.success("Good air quality")
+    ### 🧠 Techniques used:
+    - Statistical (Z-score)
+    - Machine Learning (Isolation Forest, KNN)
 
-    st.write("Average AQI:", avg)
+    ### 🚀 Features:
+    - Interactive dashboard
+    - Model evaluation
+    - Upload dataset
+
+    ### 🌍 Use cases:
+    - Air pollution monitoring
+    - Smart cities
+    """)
