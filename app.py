@@ -21,7 +21,7 @@ except:
 # CONFIG
 # -------------------------------
 st.set_page_config(page_title="AQI Anomaly Detector", layout="wide")
-st.title("🌫️ AQI Anomaly Detection (Final Version)")
+st.title("🌫️ AQI Anomaly Detection (Final Stable Version)")
 
 # -------------------------------
 # LOAD DATA
@@ -41,17 +41,29 @@ df['AQI'] = pd.to_numeric(df['AQI'], errors='coerce')
 df = df.dropna(subset=['AQI'])
 
 # -------------------------------
+# FILTER VALID CITIES (CRITICAL FIX)
+# -------------------------------
+valid_cities = []
+for city in df['City'].unique():
+    temp = df[df['City'] == city]
+    if temp['AQI'].dropna().shape[0] > 100:
+        valid_cities.append(city)
+
+if len(valid_cities) == 0:
+    st.error("No valid cities with enough data")
+    st.stop()
+
+# -------------------------------
 # CITY SELECT
 # -------------------------------
-selected_city = st.sidebar.selectbox("Select City", df['City'].unique())
+selected_city = st.sidebar.selectbox("Select City", valid_cities)
 
 base_df = df[df['City'] == selected_city].copy()
 base_df = base_df.sort_values('Date')
 base_df['AQI'] = base_df['AQI'].ffill().bfill()
 
-# SAFETY CHECK
-if len(base_df) < 50:
-    st.warning("Not enough data for this city")
+if len(base_df) < 100:
+    st.warning("Not enough data for analysis")
     st.stop()
 
 # -------------------------------
@@ -71,7 +83,6 @@ detect_df['std'] = detect_df['AQI'].rolling(30).std()
 
 detect_df['z'] = (detect_df['AQI'] - detect_df['mean']) / detect_df['std']
 
-# CLEAN AGAIN (CRITICAL)
 detect_df = detect_df.replace([np.inf, -np.inf], np.nan)
 detect_df = detect_df.dropna(subset=['AQI', 'mean', 'std', 'z'])
 
@@ -115,7 +126,6 @@ df_lstm = None
 
 if TF_AVAILABLE:
     data = base_df[['AQI']].values
-
     scaler_lstm = MinMaxScaler()
     data_scaled = scaler_lstm.fit_transform(data)
 
@@ -147,7 +157,6 @@ if TF_AVAILABLE:
 # ALIGN DATES
 # -------------------------------
 common_dates = model_df['Date']
-
 df3 = df3[df3['Date'].isin(common_dates)]
 
 if df_lstm is not None:
@@ -157,7 +166,7 @@ if df_lstm is not None:
 # TABS
 # -------------------------------
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "Trend", "Detection", "KNN", "LSTM", "Compare"
+    "📈 Trend", "🔍 Detection", "🤖 KNN", "🧠 LSTM", "📊 Compare"
 ])
 
 # -------------------------------
@@ -167,7 +176,7 @@ with tab1:
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=trend_df['Date'], y=trend_df['AQI'], name='AQI'))
     fig.add_trace(go.Scatter(x=trend_df['Date'], y=trend_df['rolling'], name='Avg'))
-    st.plotly_chart(fig)
+    st.plotly_chart(fig, use_container_width=True)
 
 # -------------------------------
 # DETECTION
@@ -179,16 +188,16 @@ with tab2:
     fig.add_trace(go.Scatter(
         x=model_df[model_df['iso_anomaly']]['Date'],
         y=model_df[model_df['iso_anomaly']]['AQI'],
-        mode='markers', name='ISO', marker=dict(color='red')
+        mode='markers', marker=dict(color='red'), name='ISO'
     ))
 
     fig.add_trace(go.Scatter(
         x=model_df[model_df['z_anomaly']]['Date'],
         y=model_df[model_df['z_anomaly']]['AQI'],
-        mode='markers', name='Z', marker=dict(color='orange')
+        mode='markers', marker=dict(color='orange'), name='Z'
     ))
 
-    st.plotly_chart(fig)
+    st.plotly_chart(fig, use_container_width=True)
 
 # -------------------------------
 # KNN
@@ -201,7 +210,7 @@ with tab3:
         y=df3[df3['knn_anomaly']]['AQI'],
         mode='markers', marker=dict(color='green')
     ))
-    st.plotly_chart(fig)
+    st.plotly_chart(fig, use_container_width=True)
 
 # -------------------------------
 # LSTM
@@ -215,7 +224,7 @@ with tab4:
             y=df_lstm[df_lstm['lstm_anomaly']]['AQI'],
             mode='markers', marker=dict(color='purple')
         ))
-        st.plotly_chart(fig)
+        st.plotly_chart(fig, use_container_width=True)
     else:
         st.warning("LSTM not available")
 
@@ -251,12 +260,12 @@ with tab5:
             mode='markers', marker=dict(color='purple'), name='LSTM'
         ))
 
-    st.plotly_chart(fig)
+    st.plotly_chart(fig, use_container_width=True)
 
-    # TABLE
-    st.write(pd.DataFrame({
-        "Model": ["Z", "ISO", "KNN", "LSTM"],
-        "Count": [
+    st.subheader("Model Comparison")
+    st.dataframe(pd.DataFrame({
+        "Model": ["Z-score", "Isolation Forest", "KNN", "LSTM"],
+        "Anomalies": [
             model_df['z_anomaly'].sum(),
             model_df['iso_anomaly'].sum(),
             df3['knn_anomaly'].sum(),
@@ -264,9 +273,4 @@ with tab5:
         ]
     }))
 
-    # DOWNLOAD
-    st.download_button(
-        "Download Report",
-        model_df.to_csv(index=False),
-        "report.csv"
-    )
+    st.download_button("Download Report", model_df.to_csv(index=False), "report.csv")
