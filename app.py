@@ -5,13 +5,13 @@ import plotly.graph_objects as go
 
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
-from pyod.models.knn import KNN
+from statsmodels.tsa.seasonal import seasonal_decompose
 
 # -------------------------------
 # CONFIG
 # -------------------------------
-st.set_page_config(page_title="AQI Anomaly Detector", layout="wide")
-st.title("🌫️ AQI Anomaly Detection (Final Corrected Version)")
+st.set_page_config(page_title="AQI Dashboard", layout="wide")
+st.title("🌫️ AQI Anomaly Detection Dashboard (Advanced)")
 
 # -------------------------------
 # LOAD DATA
@@ -24,190 +24,175 @@ else:
     df = pd.read_csv("city_day.csv", parse_dates=['Date'])
 
 # -------------------------------
-# CLEAN DATA (IMPORTANT FIX)
+# CLEAN DATA
 # -------------------------------
 df = df.sort_values(['City', 'Date'])
 df['AQI'] = pd.to_numeric(df['AQI'], errors='coerce')
-
-# Remove only invalid AQI rows
 df = df.dropna(subset=['AQI'])
 
 # -------------------------------
-# FILTER VALID CITIES
+# FILTER CITIES
 # -------------------------------
-valid_cities = []
+valid_cities = [
+    city for city in df['City'].unique()
+    if len(df[df['City'] == city]) > 150
+]
 
-for city in df['City'].unique():
-    temp = df[df['City'] == city]
-
-    if len(temp) > 150:
-        valid_cities.append(city)
-
-if len(valid_cities) == 0:
-    st.error("No valid cities available")
-    st.stop()
-
-# -------------------------------
-# SELECT CITY
-# -------------------------------
 selected_city = st.sidebar.selectbox("Select City", valid_cities)
 
 city_df = df[df['City'] == selected_city].copy()
-city_df = city_df.sort_values('Date')
-
-# Light interpolation (DO NOT overfill)
 city_df['AQI'] = city_df['AQI'].interpolate()
 
 # -------------------------------
-# TABS
+# AQI TREND
 # -------------------------------
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📈 Trend", "🔍 Detection", "🤖 KNN", "📊 Compare"
-])
+st.subheader(f"📈 AQI Trend - {selected_city}")
 
-# ===============================
-# 📈 TREND
-# ===============================
-with tab1:
-    trend_df = city_df.copy()
+trend_df = city_df.copy()
+trend_df['rolling'] = trend_df['AQI'].rolling(30, min_periods=10).mean()
 
-    trend_df['rolling'] = trend_df['AQI'].rolling(
-        window=30, min_periods=10
-    ).mean()
+fig1 = go.Figure()
+fig1.add_trace(go.Scatter(x=trend_df['Date'], y=trend_df['AQI'], name='AQI'))
+fig1.add_trace(go.Scatter(x=trend_df['Date'], y=trend_df['rolling'], name='30-Day Avg'))
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=trend_df['Date'], y=trend_df['AQI'],
-        name='AQI', line=dict(color='cyan')
-    ))
+st.plotly_chart(fig1, use_container_width=True)
 
-    fig.add_trace(go.Scatter(
-        x=trend_df['Date'], y=trend_df['rolling'],
-        name='30-Day Avg', line=dict(color='yellow')
-    ))
+# -------------------------------
+# ANOMALY DETECTION
+# -------------------------------
+detect_df = city_df.copy()
 
-    st.plotly_chart(fig, use_container_width=True)
+detect_df['mean'] = detect_df['AQI'].rolling(30, min_periods=10).mean()
+detect_df['std'] = detect_df['AQI'].rolling(30, min_periods=10).std()
 
-# ===============================
-# 🔍 DETECTION (Z + ISO)
-# ===============================
-with tab2:
-    detect_df = city_df.copy()
+detect_df = detect_df.dropna(subset=['mean', 'std'])
 
-    detect_df['mean'] = detect_df['AQI'].rolling(
-        30, min_periods=10
-    ).mean()
+detect_df['z'] = (detect_df['AQI'] - detect_df['mean']) / detect_df['std']
+detect_df['z_anomaly'] = np.abs(detect_df['z']) > 3
 
-    detect_df['std'] = detect_df['AQI'].rolling(
-        30, min_periods=10
-    ).std()
+# Isolation Forest
+scaler = StandardScaler()
+scaled = scaler.fit_transform(detect_df[['AQI']])
 
-    # Keep only valid rows for detection
-    detect_df = detect_df.dropna(subset=['mean', 'std'])
+iso = IsolationForest(contamination=0.05, random_state=42)
+detect_df['iso_anomaly'] = iso.fit_predict(scaled) == -1
 
-    detect_df['z'] = (
-        (detect_df['AQI'] - detect_df['mean']) /
-        detect_df['std']
+# -------------------------------
+# SEASONAL DECOMPOSITION (INTERACTIVE)
+# -------------------------------
+st.subheader("📊 Seasonal Decomposition (Interactive)")
+
+ts_df = city_df.set_index('Date')
+
+if len(ts_df) > 365:
+
+    result = seasonal_decompose(ts_df['AQI'], model='additive', period=365)
+
+    decomp_df = pd.DataFrame({
+        'Date': ts_df.index,
+        'Observed': result.observed,
+        'Trend': result.trend,
+        'Seasonal': result.seasonal,
+        'Residual': result.resid
+    }).dropna()
+
+    # -------------------------------
+    # PLOTLY SUBPLOTS
+    # -------------------------------
+    from plotly.subplots import make_subplots
+
+    fig2 = make_subplots(
+        rows=4, cols=1,
+        shared_xaxes=True,
+        subplot_titles=("Observed AQI", "Trend", "Seasonal", "Residual")
     )
 
-    detect_df['z_anomaly'] = np.abs(detect_df['z']) > 3
+    # Observed
+    fig2.add_trace(go.Scatter(
+        x=decomp_df['Date'], y=decomp_df['Observed'],
+        name='Observed'
+    ), row=1, col=1)
 
-    # Isolation Forest
-    scaler = StandardScaler()
-    scaled = scaler.fit_transform(detect_df[['AQI']])
+    # Highlight anomalies
+    anomaly_dates = detect_df[detect_df['iso_anomaly']]['Date']
 
-    iso = IsolationForest(contamination=0.05, random_state=42)
-    detect_df['iso_anomaly'] = iso.fit_predict(scaled) == -1
-
-    # Plot
-    fig = go.Figure()
-
-    fig.add_trace(go.Scatter(
-        x=detect_df['Date'], y=detect_df['AQI'],
-        name='AQI'
-    ))
-
-    fig.add_trace(go.Scatter(
-        x=detect_df[detect_df['iso_anomaly']]['Date'],
-        y=detect_df[detect_df['iso_anomaly']]['AQI'],
+    fig2.add_trace(go.Scatter(
+        x=anomaly_dates,
+        y=decomp_df.set_index('Date').loc[anomaly_dates]['Observed'],
         mode='markers',
-        marker=dict(color='red', size=7),
-        name='Isolation Forest'
-    ))
+        marker=dict(color='red', size=6),
+        name='Anomaly'
+    ), row=1, col=1)
 
-    fig.add_trace(go.Scatter(
-        x=detect_df[detect_df['z_anomaly']]['Date'],
-        y=detect_df[detect_df['z_anomaly']]['AQI'],
-        mode='markers',
-        marker=dict(color='orange', size=7),
-        name='Z-score'
-    ))
+    # Trend
+    fig2.add_trace(go.Scatter(
+        x=decomp_df['Date'], y=decomp_df['Trend'],
+        name='Trend'
+    ), row=2, col=1)
 
-    st.plotly_chart(fig, use_container_width=True)
+    # Seasonal
+    fig2.add_trace(go.Scatter(
+        x=decomp_df['Date'], y=decomp_df['Seasonal'],
+        name='Seasonal'
+    ), row=3, col=1)
 
-# ===============================
-# 🤖 KNN
-# ===============================
-with tab3:
-    knn_df = city_df.copy()
-    knn_df = knn_df.dropna(subset=['AQI'])
+    # Residual
+    fig2.add_trace(go.Scatter(
+        x=decomp_df['Date'], y=decomp_df['Residual'],
+        name='Residual'
+    ), row=4, col=1)
 
-    scaler = StandardScaler()
-    scaled = scaler.fit_transform(knn_df[['AQI']])
+    fig2.update_layout(height=900, showlegend=False)
 
-    knn = KNN(contamination=0.05)
-    knn_df['knn_anomaly'] = knn.fit_predict(scaled) == 1
+    st.plotly_chart(fig2, use_container_width=True)
 
-    fig = go.Figure()
+else:
+    st.warning("Need at least 1 year data for decomposition")
 
-    fig.add_trace(go.Scatter(
-        x=knn_df['Date'], y=knn_df['AQI'],
-        name='AQI'
-    ))
+# -------------------------------
+# ANOMALY VISUALIZATION
+# -------------------------------
+st.subheader("🔍 Anomaly Detection Overview")
 
-    fig.add_trace(go.Scatter(
-        x=knn_df[knn_df['knn_anomaly']]['Date'],
-        y=knn_df[knn_df['knn_anomaly']]['AQI'],
-        mode='markers',
-        marker=dict(color='green', size=7),
-        name='KNN'
-    ))
+fig3 = go.Figure()
 
-    st.plotly_chart(fig, use_container_width=True)
+fig3.add_trace(go.Scatter(
+    x=detect_df['Date'], y=detect_df['AQI'],
+    name='AQI'
+))
 
-# ===============================
-# 📊 COMPARE
-# ===============================
-with tab4:
-    fig = go.Figure()
+fig3.add_trace(go.Scatter(
+    x=detect_df[detect_df['iso_anomaly']]['Date'],
+    y=detect_df[detect_df['iso_anomaly']]['AQI'],
+    mode='markers',
+    marker=dict(color='red', size=7),
+    name='Isolation Forest'
+))
 
-    fig.add_trace(go.Scatter(
-        x=city_df['Date'], y=city_df['AQI'],
-        name='AQI'
-    ))
+fig3.add_trace(go.Scatter(
+    x=detect_df[detect_df['z_anomaly']]['Date'],
+    y=detect_df[detect_df['z_anomaly']]['AQI'],
+    mode='markers',
+    marker=dict(color='orange', size=7),
+    name='Z-score'
+))
 
-    fig.add_trace(go.Scatter(
-        x=detect_df[detect_df['iso_anomaly']]['Date'],
-        y=detect_df[detect_df['iso_anomaly']]['AQI'],
-        mode='markers',
-        marker=dict(color='red'),
-        name='ISO'
-    ))
+st.plotly_chart(fig3, use_container_width=True)
 
-    fig.add_trace(go.Scatter(
-        x=detect_df[detect_df['z_anomaly']]['Date'],
-        y=detect_df[detect_df['z_anomaly']]['AQI'],
-        mode='markers',
-        marker=dict(color='orange'),
-        name='Z'
-    ))
+# -------------------------------
+# INSIGHTS
+# -------------------------------
+st.subheader("💡 Insights")
 
-    fig.add_trace(go.Scatter(
-        x=knn_df[knn_df['knn_anomaly']]['Date'],
-        y=knn_df[knn_df['knn_anomaly']]['AQI'],
-        mode='markers',
-        marker=dict(color='green'),
-        name='KNN'
-    ))
+st.markdown(f"""
+- Selected City: **{selected_city}**
+- Total Data Points: {len(city_df)}
+- Isolation Forest Anomalies: {detect_df['iso_anomaly'].sum()}
+- Z-score Anomalies: {detect_df['z_anomaly'].sum()}
 
-    st.plotly_chart(fig, use_container_width=True)
+### Interpretation:
+- Trend shows long-term pollution change  
+- Seasonal shows recurring patterns (winter pollution spikes)  
+- Residual shows unexpected events  
+- Red dots = critical anomalies  
+""")
