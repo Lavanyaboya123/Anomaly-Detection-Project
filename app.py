@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 # CONFIG
 # -------------------------------
 st.set_page_config(page_title="AQI Dashboard", layout="wide")
-st.title("🌫️ AQI Anomaly Detection Dashboard")
+st.title("🌫️ AQI Anomaly Detection Dashboard (Final)")
 
 # -------------------------------
 # LOAD DATA
@@ -43,7 +43,6 @@ selected_city = st.sidebar.selectbox("Select City", valid_cities)
 city_df = df[df['City'] == selected_city].copy()
 city_df['AQI'] = city_df['AQI'].interpolate()
 
-# Data check
 if city_df['AQI'].isna().sum() > 0:
     st.warning("Missing AQI values handled automatically")
 
@@ -105,7 +104,7 @@ detect_df['severity'] = detect_df['AQI'].apply(get_severity)
 detect_df['reason'] = detect_df.apply(lambda r: get_reason(r['AQI'], r['z']), axis=1)
 
 # -------------------------------
-# SEASONAL DECOMPOSITION
+# SEASONAL DECOMPOSITION (FIXED)
 # -------------------------------
 st.subheader("📊 Seasonal Decomposition + Anomalies")
 
@@ -126,7 +125,11 @@ if len(ts_df) > 365:
         'Residual': result.resid
     }).dropna()
 
-    # SAFE MERGE
+    # 🔥 FIX: REMOVE INDEX CONFLICT
+    decomp_df = decomp_df.reset_index(drop=True)
+    detect_df = detect_df.reset_index(drop=True)
+
+    # 🔥 SAFE MERGE
     merged = pd.merge(
         decomp_df,
         detect_df[['Date', 'iso_anomaly', 'severity', 'reason']],
@@ -142,8 +145,10 @@ if len(ts_df) > 365:
         subplot_titles=("Observed", "Trend", "Seasonal", "Residual")
     )
 
+    # Observed
     fig2.add_trace(go.Scatter(x=merged['Date'], y=merged['Observed']), row=1, col=1)
 
+    # Anomalies
     anomalies = merged[merged['iso_anomaly']]
 
     fig2.add_trace(go.Scatter(
@@ -157,11 +162,13 @@ if len(ts_df) > 365:
         "Date: %{x}<br>AQI: %{y}<br>Severity: %{customdata}<br>%{text}<extra></extra>"
     ), row=1, col=1)
 
+    # Other components
     fig2.add_trace(go.Scatter(x=merged['Date'], y=merged['Trend']), row=2, col=1)
     fig2.add_trace(go.Scatter(x=merged['Date'], y=merged['Seasonal']), row=3, col=1)
     fig2.add_trace(go.Scatter(x=merged['Date'], y=merged['Residual']), row=4, col=1)
 
     fig2.update_layout(height=900)
+
     st.plotly_chart(fig2, use_container_width=True)
 
 else:
