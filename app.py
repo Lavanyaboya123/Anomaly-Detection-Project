@@ -6,7 +6,7 @@ import plotly.express as px
 
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import precision_score, recall_score, f1_score
+from sklearn.metrics import f1_score
 
 from pyod.models.knn import KNN
 from pyod.models.lof import LOF
@@ -14,8 +14,8 @@ from pyod.models.lof import LOF
 # -------------------------------
 # CONFIG
 # -------------------------------
-st.set_page_config(page_title="AQI Advanced Dashboard", layout="wide")
-st.title("🌫️ Advanced AQI Anomaly Detection System")
+st.set_page_config(page_title="AQI Anomaly Detection", layout="wide")
+st.title("🌫️ AQI Anomaly Detection System")
 
 # -------------------------------
 # LOAD DATA
@@ -74,9 +74,9 @@ def get_reason(row):
     if pd.isna(row['mean']) or pd.isna(row['std']):
         return "Insufficient data"
     elif row['AQI'] > row['mean'] + 2 * row['std']:
-        return "High pollution spike (traffic / weather / seasonal impact)"
+        return "High pollution spike (traffic/weather impact)"
     elif row['AQI'] < row['mean'] - 2 * row['std']:
-        return "Sudden drop (rain / improved air quality)"
+        return "Sudden drop (rain/clean air)"
     else:
         return "Normal variation"
 
@@ -94,14 +94,6 @@ city_df['reason'] = city_df.apply(get_reason, axis=1)
 city_df['severity'] = city_df.apply(get_severity, axis=1)
 
 # -------------------------------
-# KPI DASHBOARD
-# -------------------------------
-col1, col2, col3 = st.columns(3)
-col1.metric("Average AQI", round(city_df['AQI'].mean(), 2))
-col2.metric("Max AQI", int(city_df['AQI'].max()))
-col3.metric("Total Anomalies", int(city_df['iso_anomaly'].sum()))
-
-# -------------------------------
 # TABS
 # -------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -116,6 +108,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # -------------------------------
 with tab1:
     st.subheader(f"AQI Trend - {city}")
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=city_df['Date'], y=city_df['AQI'], name='AQI'))
     st.plotly_chart(fig, use_container_width=True)
@@ -154,7 +147,7 @@ with tab2:
     st.plotly_chart(fig2, use_container_width=True)
 
 # -------------------------------
-# TAB 3: MODELS
+# TAB 3: MODEL COMPARISON
 # -------------------------------
 with tab3:
     st.subheader("Model Evaluation")
@@ -169,15 +162,12 @@ with tab3:
         y_true = city_df['ground_truth'].astype(int)
         y_pred = city_df[m].astype(int)
 
-        p = precision_score(y_true, y_pred, zero_division=0)
-        r = recall_score(y_true, y_pred, zero_division=0)
-        f = f1_score(y_true, y_pred, zero_division=0)
+        f1 = f1_score(y_true, y_pred, zero_division=0)
+        scores[m] = f1
 
-        scores[m] = f
-        st.write(f"{m} → Precision={p:.2f}, Recall={r:.2f}, F1={f:.2f}")
+        st.write(f"{m} → F1 Score: {f1:.2f}")
 
     best_model = max(scores, key=scores.get)
-
     st.success(f"🏆 Best Model: {best_model}")
 
     df_scores = pd.DataFrame({
@@ -185,55 +175,77 @@ with tab3:
         "F1 Score": list(scores.values())
     })
 
-    fig_bar = px.bar(df_scores, x="Model", y="F1 Score")
+    fig_bar = px.bar(df_scores, x="Model", y="F1 Score", color="Model")
     st.plotly_chart(fig_bar, use_container_width=True)
 
 # -------------------------------
-# TAB 4: INSIGHTS
+# TAB 4: INSIGHTS (FIXED)
 # -------------------------------
 with tab4:
-    st.subheader("Smart Insights")
+    st.subheader("💡 Smart Insights")
 
-    avg = city_df['AQI'].mean()
+    latest_aqi = city_df['AQI'].iloc[-1]
 
-    if avg > 200:
+    def aqi_category(aqi):
+        if aqi <= 50:
+            return "Good"
+        elif aqi <= 100:
+            return "Satisfactory"
+        elif aqi <= 200:
+            return "Moderate"
+        elif aqi <= 300:
+            return "Poor"
+        elif aqi <= 400:
+            return "Very Poor"
+        else:
+            return "Severe"
+
+    category = aqi_category(latest_aqi)
+
+    st.metric("Latest AQI", int(latest_aqi))
+    st.write(f"Air Quality Category: **{category}**")
+
+    if category == "Good":
+        st.success("Air quality is good")
+    elif category == "Satisfactory":
+        st.info("Air quality is acceptable")
+    elif category == "Moderate":
+        st.warning("Air quality is moderate")
+    elif category in ["Poor", "Very Poor"]:
         st.error("Air quality is unhealthy")
-    elif avg > 100:
-        st.warning("Moderate pollution levels")
     else:
-        st.success("Good air quality")
+        st.error("Severe pollution 🚨")
 
-    st.subheader("🧠 Why anomalies happened")
+    # anomaly insight
+    anomaly_count = city_df['iso_anomaly'].sum()
+    st.write(f"Total anomalies detected: {anomaly_count}")
 
+    if anomaly_count > 20:
+        st.warning("Frequent pollution spikes detected")
+    elif anomaly_count > 5:
+        st.info("Occasional anomalies detected")
+    else:
+        st.success("Stable air quality pattern")
+
+    # reasons
+    st.markdown("### 🧠 Why anomalies happen")
     latest = city_df[city_df['iso_anomaly']].tail(5)
-    for _, row in latest.iterrows():
-        st.write(
-            f"📅 {row['Date'].date()} → AQI {row['AQI']} "
-            f"({row['severity']}) because {row['reason']}"
-        )
 
-    st.subheader("📊 Final Conclusion")
+    if len(latest) == 0:
+        st.info("No recent anomalies")
+    else:
+        for _, row in latest.iterrows():
+            st.write(
+                f"{row['Date'].date()} → AQI {row['AQI']} "
+                f"({row['severity']}) because {row['reason']}"
+            )
 
-    st.markdown(f"""
-    ### 🏆 Best Model: {best_model}
-
-    - Isolation Forest works well for pattern anomalies  
-    - Z-score detects extreme spikes  
-    - KNN/LOF detect density-based anomalies  
-
-    👉 Combining models improves accuracy  
-
-    ### 🌍 Real-world Impact:
+    # impact
+    st.markdown("### 🌍 Real-world impact")
+    st.markdown("""
     - Helps detect pollution spikes early  
     - Useful for smart city monitoring  
-    - Supports environmental decisions  
-    """)
-
-    st.subheader("📌 Simple Explanation")
-
-    st.markdown("""
-    This project detects unusual pollution events using statistical and machine learning models.
-    It helps understand when and why air quality changes happen.
+    - Supports environmental decision-making  
     """)
 
 # -------------------------------
@@ -244,6 +256,6 @@ csv = city_df.to_csv(index=False).encode('utf-8')
 st.download_button(
     "📥 Download Data",
     data=csv,
-    file_name=f"{city}_aqi_analysis.csv",
+    file_name=f"{city}_aqi.csv",
     mime='text/csv'
 )
