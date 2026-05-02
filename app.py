@@ -14,8 +14,8 @@ from pyod.models.lof import LOF
 # -------------------------------
 # CONFIG
 # -------------------------------
-st.set_page_config(page_title="Advanced AQI Dashboard", layout="wide")
-st.title("🌫️ Advanced AQI Anomaly Detection System")
+st.set_page_config(page_title="AQI Dashboard", layout="wide")
+st.title("🌫️ AQI Anomaly Detection Dashboard")
 
 # -------------------------------
 # LOAD DATA
@@ -44,7 +44,7 @@ city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
 city_df['AQI'] = city_df['AQI'].ffill().bfill()
 
 # -------------------------------
-# FEATURES (Z-SCORE)
+# FEATURES
 # -------------------------------
 city_df['mean'] = city_df['AQI'].rolling(30, min_periods=10).mean()
 city_df['std'] = city_df['AQI'].rolling(30, min_periods=10).std()
@@ -53,7 +53,7 @@ city_df['z'] = (city_df['AQI'] - city_df['mean']) / city_df['std']
 city_df['z_anomaly'] = np.abs(city_df['z']) > 3
 
 # -------------------------------
-# ML MODELS
+# MODELS
 # -------------------------------
 scaler = StandardScaler()
 scaled = scaler.fit_transform(city_df[['AQI']])
@@ -68,15 +68,15 @@ city_df['knn_anomaly'] = knn.fit_predict(scaled) == 1
 city_df['lof_anomaly'] = lof.fit_predict(scaled) == 1
 
 # -------------------------------
-# ANOMALY EXPLANATION
+# EXPLANATION
 # -------------------------------
 def get_reason(row):
-    if pd.isna(row['mean']) or pd.isna(row['std']):
+    if pd.isna(row['mean']):
         return "Insufficient data"
-    elif row['AQI'] > row['mean'] + 2 * row['std']:
-        return "High pollution spike"
-    elif row['AQI'] < row['mean'] - 2 * row['std']:
-        return "Sudden drop"
+    elif row['AQI'] > row['mean'] + 2*row['std']:
+        return "High pollution spike (traffic / weather / industry)"
+    elif row['AQI'] < row['mean'] - 2*row['std']:
+        return "Sudden drop (rain / low activity)"
     else:
         return "Normal variation"
 
@@ -94,149 +94,117 @@ city_df['reason'] = city_df.apply(get_reason, axis=1)
 city_df['severity'] = city_df.apply(get_severity, axis=1)
 
 # -------------------------------
-# TOP METRICS
+# TABS (NEW STRUCTURE)
 # -------------------------------
-col1, col2, col3 = st.columns(3)
-col1.metric("Avg AQI", f"{city_df['AQI'].mean():.1f}")
-col2.metric("Max AQI", f"{city_df['AQI'].max()}")
-col3.metric("Total Anomalies", int(city_df['iso_anomaly'].sum()))
-
-# -------------------------------
-# GRAPH 1: TREND
-# -------------------------------
-st.subheader("📈 AQI Trend")
-
-fig1 = go.Figure()
-fig1.add_trace(go.Scatter(x=city_df['Date'], y=city_df['AQI'], name='AQI'))
-st.plotly_chart(fig1, use_container_width=True)
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📈 Trend",
+    "🤖 Models",
+    "💡 Insights",
+    "📊 Conclusion"
+])
 
 # -------------------------------
-# GRAPH 2: MODEL COMPARISON
+# TAB 1: TREND
 # -------------------------------
-st.subheader("🔍 Model Comparison")
+with tab1:
+    st.subheader(f"AQI Trend - {city}")
 
-fig2 = go.Figure()
-fig2.add_trace(go.Scatter(x=city_df['Date'], y=city_df['AQI'], name='AQI'))
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=city_df['Date'], y=city_df['AQI'], name="AQI"))
 
-def add_points(col, color, name):
-    subset = city_df[city_df[col]]
-    fig2.add_trace(go.Scatter(
-        x=subset['Date'],
-        y=subset['AQI'],
-        mode='markers',
-        marker=dict(color=color, size=8),
-        name=name,
-        text=subset['reason'],
-        customdata=subset['severity'],
-        hovertemplate=
-        "<b>Date:</b> %{x}<br>" +
-        "<b>AQI:</b> %{y}<br>" +
-        "<b>Reason:</b> %{text}<br>" +
-        "<b>Severity:</b> %{customdata}<extra></extra>"
-    ))
-
-add_points('z_anomaly', 'orange', 'Z-score')
-add_points('iso_anomaly', 'red', 'Isolation Forest')
-add_points('knn_anomaly', 'green', 'KNN')
-add_points('lof_anomaly', 'purple', 'LOF')
-
-st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
 
 # -------------------------------
-# MODEL EVALUATION
+# TAB 2: MODELS
 # -------------------------------
-st.subheader("📊 Model Evaluation")
+with tab2:
+    st.subheader("Model Comparison")
 
-threshold_gt = city_df['AQI'].quantile(0.95)
-city_df['ground_truth'] = city_df['AQI'] > threshold_gt
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=city_df['Date'], y=city_df['AQI'], name="AQI"))
 
-models = ['z_anomaly','iso_anomaly','knn_anomaly','lof_anomaly']
-scores = {}
+    def add_points(col, color, name):
+        subset = city_df[city_df[col]]
+        fig.add_trace(go.Scatter(
+            x=subset['Date'],
+            y=subset['AQI'],
+            mode='markers',
+            marker=dict(color=color, size=7),
+            name=name,
+            text=subset['reason'],
+            customdata=subset['severity'],
+            hovertemplate=
+            "AQI: %{y}<br>" +
+            "Reason: %{text}<br>" +
+            "Severity: %{customdata}<extra></extra>"
+        ))
 
-for m in models:
-    y_true = city_df['ground_truth'].astype(int)
-    y_pred = city_df[m].astype(int)
+    add_points('z_anomaly', 'orange', 'Z-score')
+    add_points('iso_anomaly', 'red', 'Isolation Forest')
+    add_points('knn_anomaly', 'green', 'KNN')
+    add_points('lof_anomaly', 'purple', 'LOF')
 
-    p = precision_score(y_true, y_pred, zero_division=0)
-    r = recall_score(y_true, y_pred, zero_division=0)
-    f = f1_score(y_true, y_pred, zero_division=0)
+    st.plotly_chart(fig, use_container_width=True)
 
-    scores[m] = f
-    st.write(f"{m} → Precision={p:.2f}, Recall={r:.2f}, F1={f:.2f}")
+    # Evaluation
+    threshold = city_df['AQI'].quantile(0.95)
+    city_df['gt'] = city_df['AQI'] > threshold
 
-# -------------------------------
-# BEST MODEL
-# -------------------------------
-best_model = max(scores, key=scores.get)
-st.subheader("🏆 Best Model")
-st.success(f"{best_model} performs best based on F1 Score")
+    scores = {}
+    for m in ['z_anomaly','iso_anomaly','knn_anomaly','lof_anomaly']:
+        p = precision_score(city_df['gt'], city_df[m], zero_division=0)
+        r = recall_score(city_df['gt'], city_df[m], zero_division=0)
+        f = f1_score(city_df['gt'], city_df[m], zero_division=0)
 
-# -------------------------------
-# BAR CHART
-# -------------------------------
-score_df = pd.DataFrame({
-    "Model": list(scores.keys()),
-    "F1 Score": list(scores.values())
-})
+        scores[m] = f
+        st.write(f"{m}: F1 = {f:.2f}")
 
-fig_bar = px.bar(score_df, x="Model", y="F1 Score")
-st.plotly_chart(fig_bar, use_container_width=True)
+    best_model = max(scores, key=scores.get)
 
-# -------------------------------
-# WHY ANOMALY HAPPENED
-# -------------------------------
-st.subheader("🧠 Why anomalies happened")
+    st.success(f"🏆 Best Model: {best_model}")
 
-latest = city_df[city_df['iso_anomaly']].tail(5)
+    # Bar chart
+    df_score = pd.DataFrame({
+        "Model": scores.keys(),
+        "F1 Score": scores.values()
+    })
 
-for _, row in latest.iterrows():
-    st.write(
-        f"📅 {row['Date'].date()} → AQI {row['AQI']} "
-        f"({row['severity']}) because {row['reason']}"
-    )
-
-# -------------------------------
-# SMART INSIGHTS
-# -------------------------------
-st.subheader("💡 Smart Insights")
-
-high = city_df[city_df['severity'] == 'High']
-st.write(f"🔴 High Severity Events: {len(high)}")
-
-if len(high) > 0:
-    st.write(high[['Date','AQI']].head())
-
-avg = city_df['AQI'].mean()
-
-if avg > 200:
-    st.error("Overall air quality is unhealthy")
-elif avg > 100:
-    st.warning("Moderate pollution")
-else:
-    st.success("Good air quality")
+    st.plotly_chart(px.bar(df_score, x="Model", y="F1 Score"),
+                    use_container_width=True)
 
 # -------------------------------
-# DOWNLOAD
+# TAB 3: INSIGHTS
 # -------------------------------
-csv = city_df.to_csv(index=False).encode('utf-8')
+with tab3:
+    st.subheader("Why anomalies happened")
 
-st.download_button(
-    "📥 Download Processed Data",
-    data=csv,
-    file_name=f"{city}_aqi_analysis.csv",
-    mime='text/csv'
-)
+    anomalies = city_df[city_df['iso_anomaly']].tail(5)
+
+    for _, row in anomalies.iterrows():
+        st.write(
+            f"{row['Date'].date()} → AQI {row['AQI']} "
+            f"({row['severity']}) → {row['reason']}"
+        )
+
+    st.subheader("Real-world impact")
+    st.markdown("""
+    - Detects pollution spikes early  
+    - Useful for smart city monitoring  
+    - Helps environmental decision-making  
+    """)
 
 # -------------------------------
-# SIMPLE EXPLANATION
+# TAB 4: CONCLUSION
 # -------------------------------
-st.subheader("📌 Simple Explanation")
+with tab4:
+    st.subheader("Final Conclusion")
 
-st.markdown("""
-This system analyzes air quality data and detects unusual events (anomalies).
+    st.write(f"Best model: {best_model}")
 
-- Uses statistical + machine learning methods
-- Detects pollution spikes
-- Explains anomalies clearly
-- Compares models to find best performance
-""")
+    st.markdown("""
+    - Isolation Forest captures complex patterns  
+    - Z-score detects extreme spikes  
+    - KNN & LOF identify density anomalies  
+
+    👉 Combining models improves accuracy
+    """)
