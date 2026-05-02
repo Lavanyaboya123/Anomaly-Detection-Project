@@ -5,126 +5,125 @@ import plotly.graph_objects as go
 
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import precision_score, recall_score, f1_score
-from statsmodels.tsa.seasonal import seasonal_decompose
 
-try:
-    from pyod.models.knn import KNN
-    pyod_available = True
-except:
-    pyod_available = False
-
-st.set_page_config(page_title="AQI App", layout="wide")
-st.title("🌫️ AQI Anomaly Detection")
+# -------------------------------
+# PAGE CONFIG
+# -------------------------------
+st.set_page_config(page_title="AQI Dashboard", layout="wide")
+st.title("🌫️ AQI Anomaly Detection Dashboard")
 
 # -------------------------------
 # LOAD DATA
 # -------------------------------
-@st.cache_data
-def load_data(file):
-    if file:
-        return pd.read_csv(file, parse_dates=['Date'])
-    return pd.read_csv("city_day.csv", parse_dates=['Date'])
-
 uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
-df = load_data(uploaded_file)
 
-df = df.sort_values(['City', 'Date']).reset_index(drop=True)
+if uploaded_file:
+    df = pd.read_csv(uploaded_file, parse_dates=['Date'])
+else:
+    df = pd.read_csv("city_day.csv", parse_dates=['Date'])
 
 # -------------------------------
-# 🔥 SINGLE PIPELINE (IMPORTANT)
+# CLEAN DATA
+# -------------------------------
+df = df.sort_values(['City', 'Date'])
+df['AQI'] = pd.to_numeric(df['AQI'], errors='coerce')
+
+# -------------------------------
+# SELECT CITY
 # -------------------------------
 selected_city = st.sidebar.selectbox("Select City", df['City'].unique())
 
 city_df = df[df['City'] == selected_city].copy()
 
-city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
+# Fill missing values safely
 city_df['AQI'] = city_df['AQI'].ffill().bfill()
 
-# Rolling safely
-city_df['mean'] = city_df['AQI'].rolling(30, min_periods=10).mean()
-city_df['std'] = city_df['AQI'].rolling(30, min_periods=10).std()
+# -------------------------------
+# GRAPH 1: AQI TREND
+# -------------------------------
+st.subheader(f"📈 AQI Trend - {selected_city}")
 
-city_df['z'] = (city_df['AQI'] - city_df['mean']) / city_df['std']
-city_df['z_anomaly'] = np.abs(city_df['z']) > 3
+fig1 = go.Figure()
+fig1.add_trace(go.Scatter(
+    x=city_df['Date'],
+    y=city_df['AQI'],
+    name='AQI'
+))
 
-# ML
+st.plotly_chart(fig1, use_container_width=True)
+
+# -------------------------------
+# ANOMALY DETECTION
+# -------------------------------
+detect_df = city_df.copy()
+
+# Rolling stats (SAFE)
+detect_df['mean'] = detect_df['AQI'].rolling(30, min_periods=10).mean()
+detect_df['std'] = detect_df['AQI'].rolling(30, min_periods=10).std()
+
+detect_df['z'] = (detect_df['AQI'] - detect_df['mean']) / detect_df['std']
+detect_df['z_anomaly'] = np.abs(detect_df['z']) > 3
+
+# Isolation Forest
 scaler = StandardScaler()
-scaled = scaler.fit_transform(city_df[['AQI']])
+scaled = scaler.fit_transform(detect_df[['AQI']])
 
 iso = IsolationForest(contamination=0.05, random_state=42)
-city_df['iso_anomaly'] = iso.fit_predict(scaled) == -1
+detect_df['iso_anomaly'] = iso.fit_predict(scaled) == -1
 
 # -------------------------------
-# TABS
+# GRAPH 2: ANOMALIES
 # -------------------------------
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📈 Trend",
-    "🔍 Anomaly",
-    "🤖 ML",
-    "💡 Insights"
-])
+st.subheader("🔍 Anomaly Detection")
 
-# -------------------------------
-# TAB 1
-# -------------------------------
-with tab1:
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=city_df['Date'], y=city_df['AQI']))
-    st.plotly_chart(fig, use_container_width=True)
+fig2 = go.Figure()
 
-# -------------------------------
-# TAB 2
-# -------------------------------
-with tab2:
-    fig = go.Figure()
+fig2.add_trace(go.Scatter(
+    x=detect_df['Date'],
+    y=detect_df['AQI'],
+    name='AQI'
+))
 
-    fig.add_trace(go.Scatter(
-        x=city_df['Date'],
-        y=city_df['AQI']
-    ))
+# Isolation Forest anomalies
+fig2.add_trace(go.Scatter(
+    x=detect_df[detect_df['iso_anomaly']]['Date'],
+    y=detect_df[detect_df['iso_anomaly']]['AQI'],
+    mode='markers',
+    marker=dict(color='red', size=8),
+    name='Isolation Forest'
+))
 
-    anomalies = city_df[city_df['iso_anomaly']]
+# Z-score anomalies
+fig2.add_trace(go.Scatter(
+    x=detect_df[detect_df['z_anomaly']]['Date'],
+    y=detect_df[detect_df['z_anomaly']]['AQI'],
+    mode='markers',
+    marker=dict(color='orange', size=6),
+    name='Z-score'
+))
 
-    fig.add_trace(go.Scatter(
-        x=anomalies['Date'],
-        y=anomalies['AQI'],
-        mode='markers',
-        marker=dict(color='red', size=8)
-    ))
-
-    st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig2, use_container_width=True)
 
 # -------------------------------
-# TAB 3
+# INSIGHTS
 # -------------------------------
-with tab3:
-    st.write("Isolation Forest:", city_df['iso_anomaly'].sum())
-    st.write("Z-score:", city_df['z_anomaly'].sum())
+st.subheader("💡 Insights")
 
-    if pyod_available:
-        knn = KNN(contamination=0.05)
-        city_df['knn_anomaly'] = knn.fit_predict(scaled) == 1
-        st.write("KNN:", city_df['knn_anomaly'].sum())
+avg_aqi = city_df['AQI'].mean()
+max_aqi = city_df['AQI'].max()
 
-# -------------------------------
-# TAB 4
-# -------------------------------
-with tab4:
-    avg = city_df['AQI'].mean()
-    max_val = city_df['AQI'].max()
+st.write(f"📍 City: {selected_city}")
+st.write(f"📊 Average AQI: {avg_aqi:.2f}")
+st.write(f"🚨 Max AQI: {max_aqi}")
+st.write(f"🔴 Isolation Forest Anomalies: {detect_df['iso_anomaly'].sum()}")
+st.write(f"🟠 Z-score Anomalies: {detect_df['z_anomaly'].sum()}")
 
-    st.write(f"Avg AQI: {avg:.2f}")
-    st.write(f"Max AQI: {max_val}")
-    st.write(f"Anomalies: {city_df['iso_anomaly'].sum()}")
-
-    if max_val > 300:
-        st.error("Severe pollution 🚨")
-    elif avg > 200:
-        st.error("Unhealthy")
-    elif avg > 100:
-        st.warning("Moderate")
-    else:
-        st.success("Good")
-
-
+# Smart interpretation
+if max_aqi > 300:
+    st.error("Severe pollution spikes detected 🚨")
+elif avg_aqi > 200:
+    st.error("Unhealthy air quality")
+elif avg_aqi > 100:
+    st.warning("Moderate pollution")
+else:
+    st.success("Good air quality")
