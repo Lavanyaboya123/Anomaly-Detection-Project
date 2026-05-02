@@ -14,8 +14,8 @@ from pyod.models.lof import LOF
 # -------------------------------
 # CONFIG
 # -------------------------------
-st.set_page_config(page_title="AQI Anomaly Detection", layout="wide")
-st.title("🌫️ AQI Anomaly Detection System")
+st.set_page_config(page_title="AQI Advanced Dashboard", layout="wide")
+st.title("🌫️ Advanced AQI Anomaly Detection System")
 
 # -------------------------------
 # LOAD DATA
@@ -74,9 +74,9 @@ def get_reason(row):
     if pd.isna(row['mean']) or pd.isna(row['std']):
         return "Insufficient data"
     elif row['AQI'] > row['mean'] + 2 * row['std']:
-        return "High pollution spike (traffic/weather impact)"
+        return "High pollution spike (traffic / weather / seasonal impact)"
     elif row['AQI'] < row['mean'] - 2 * row['std']:
-        return "Sudden drop (rain/clean air)"
+        return "Sudden drop (rain / improved air quality)"
     else:
         return "Normal variation"
 
@@ -94,7 +94,15 @@ city_df['reason'] = city_df.apply(get_reason, axis=1)
 city_df['severity'] = city_df.apply(get_severity, axis=1)
 
 # -------------------------------
-# TABS (IMPORTANT UPGRADE)
+# KPI DASHBOARD
+# -------------------------------
+col1, col2, col3 = st.columns(3)
+col1.metric("Average AQI", round(city_df['AQI'].mean(), 2))
+col2.metric("Max AQI", int(city_df['AQI'].max()))
+col3.metric("Total Anomalies", int(city_df['iso_anomaly'].sum()))
+
+# -------------------------------
+# TABS
 # -------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "📈 Trend",
@@ -108,7 +116,6 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # -------------------------------
 with tab1:
     st.subheader(f"AQI Trend - {city}")
-
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=city_df['Date'], y=city_df['AQI'], name='AQI'))
     st.plotly_chart(fig, use_container_width=True)
@@ -162,10 +169,12 @@ with tab3:
         y_true = city_df['ground_truth'].astype(int)
         y_pred = city_df[m].astype(int)
 
-        f1 = f1_score(y_true, y_pred, zero_division=0)
-        scores[m] = f1
+        p = precision_score(y_true, y_pred, zero_division=0)
+        r = recall_score(y_true, y_pred, zero_division=0)
+        f = f1_score(y_true, y_pred, zero_division=0)
 
-        st.write(f"{m} → F1 Score: {f1:.2f}")
+        scores[m] = f
+        st.write(f"{m} → Precision={p:.2f}, Recall={r:.2f}, F1={f:.2f}")
 
     best_model = max(scores, key=scores.get)
 
@@ -194,20 +203,37 @@ with tab4:
     else:
         st.success("Good air quality")
 
-    st.markdown("### Why anomalies happen")
-    latest = city_df[city_df['iso_anomaly']].tail(5)
+    st.subheader("🧠 Why anomalies happened")
 
+    latest = city_df[city_df['iso_anomaly']].tail(5)
     for _, row in latest.iterrows():
         st.write(
-            f"{row['Date'].date()} → AQI {row['AQI']} "
+            f"📅 {row['Date'].date()} → AQI {row['AQI']} "
             f"({row['severity']}) because {row['reason']}"
         )
 
-    st.markdown("### Real-world impact")
-    st.markdown("""
+    st.subheader("📊 Final Conclusion")
+
+    st.markdown(f"""
+    ### 🏆 Best Model: {best_model}
+
+    - Isolation Forest works well for pattern anomalies  
+    - Z-score detects extreme spikes  
+    - KNN/LOF detect density-based anomalies  
+
+    👉 Combining models improves accuracy  
+
+    ### 🌍 Real-world Impact:
     - Helps detect pollution spikes early  
     - Useful for smart city monitoring  
-    - Can support government decisions  
+    - Supports environmental decisions  
+    """)
+
+    st.subheader("📌 Simple Explanation")
+
+    st.markdown("""
+    This project detects unusual pollution events using statistical and machine learning models.
+    It helps understand when and why air quality changes happen.
     """)
 
 # -------------------------------
@@ -218,6 +244,6 @@ csv = city_df.to_csv(index=False).encode('utf-8')
 st.download_button(
     "📥 Download Data",
     data=csv,
-    file_name=f"{city}_aqi.csv",
+    file_name=f"{city}_aqi_analysis.csv",
     mime='text/csv'
 )
