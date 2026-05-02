@@ -10,13 +10,18 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 from pyod.models.knn import KNN
 from pyod.models.lof import LOF
 
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, LSTM, RepeatVector
+# OPTIONAL TensorFlow (SAFE FIX)
+try:
+    from tensorflow.keras.models import Model
+    from tensorflow.keras.layers import Input, LSTM, RepeatVector
+    tf_available = True
+except:
+    tf_available = False
 
 # -------------------------------
 # CONFIG
 # -------------------------------
-st.set_page_config(page_title="Advanced Anomaly Detection", layout="wide")
+st.set_page_config(page_title="Advanced AQI Anomaly Detection", layout="wide")
 st.title("🚀 Advanced Time Series Anomaly Detection")
 
 # -------------------------------
@@ -35,8 +40,8 @@ df = df.sort_values(['City', 'Date'])
 # SELECT CITY
 # -------------------------------
 city = st.sidebar.selectbox("Select City", df['City'].unique())
-city_df = df[df['City'] == city].copy()
 
+city_df = df[df['City'] == city].copy()
 city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
 city_df['AQI'] = city_df['AQI'].ffill().bfill()
 
@@ -47,7 +52,7 @@ scaler = StandardScaler()
 scaled = scaler.fit_transform(city_df[['AQI']])
 
 # -------------------------------
-# 1. STATISTICAL MODEL (Z-SCORE)
+# 1. Z-SCORE
 # -------------------------------
 city_df['mean'] = city_df['AQI'].rolling(30, min_periods=10).mean()
 city_df['std'] = city_df['AQI'].rolling(30, min_periods=10).std()
@@ -56,13 +61,13 @@ city_df['z'] = (city_df['AQI'] - city_df['mean']) / city_df['std']
 city_df['z_anomaly'] = np.abs(city_df['z']) > 3
 
 # -------------------------------
-# 2. ML MODEL (Isolation Forest)
+# 2. ISOLATION FOREST
 # -------------------------------
 iso = IsolationForest(contamination=0.05, random_state=42)
 city_df['iso_anomaly'] = iso.fit_predict(scaled) == -1
 
 # -------------------------------
-# 3. PYOD MODELS (KNN + LOF)
+# 3. PYOD MODELS
 # -------------------------------
 knn = KNN(contamination=0.05)
 lof = LOF(contamination=0.05)
@@ -71,7 +76,7 @@ city_df['knn_anomaly'] = knn.fit_predict(scaled) == 1
 city_df['lof_anomaly'] = lof.fit_predict(scaled) == 1
 
 # -------------------------------
-# 4. LSTM AUTOENCODER
+# 4. LSTM AUTOENCODER (OPTIONAL)
 # -------------------------------
 def create_sequences(data, window=10):
     X = []
@@ -79,34 +84,35 @@ def create_sequences(data, window=10):
         X.append(data[i:i+window])
     return np.array(X)
 
-seq_data = create_sequences(scaled)
+if tf_available:
+    seq_data = create_sequences(scaled)
 
-if len(seq_data) > 50:
-    inputs = Input(shape=(seq_data.shape[1], seq_data.shape[2]))
-    encoded = LSTM(32, activation='relu')(inputs)
-    decoded = RepeatVector(seq_data.shape[1])(encoded)
-    decoded = LSTM(32, activation='relu', return_sequences=True)(decoded)
+    if len(seq_data) > 50:
+        inputs = Input(shape=(seq_data.shape[1], seq_data.shape[2]))
+        encoded = LSTM(32, activation='relu')(inputs)
+        decoded = RepeatVector(seq_data.shape[1])(encoded)
+        decoded = LSTM(32, activation='relu', return_sequences=True)(decoded)
 
-    model = Model(inputs, decoded)
-    model.compile(optimizer='adam', loss='mse')
+        model = Model(inputs, decoded)
+        model.compile(optimizer='adam', loss='mse')
+        model.fit(seq_data, seq_data, epochs=3, batch_size=32, verbose=0)
 
-    model.fit(seq_data, seq_data, epochs=5, batch_size=32, verbose=0)
+        recon = model.predict(seq_data)
+        loss = np.mean(np.abs(recon - seq_data), axis=(1,2))
 
-    recon = model.predict(seq_data)
-    loss = np.mean(np.abs(recon - seq_data), axis=(1,2))
+        threshold = np.percentile(loss, 95)
+        lstm_flags = loss > threshold
 
-    threshold = np.percentile(loss, 95)
-    lstm_anomaly = loss > threshold
-
-    # align with original data
-    city_df['lstm_anomaly'] = False
-    city_df.iloc[10:, city_df.columns.get_loc('lstm_anomaly')] = lstm_anomaly
-
+        city_df['lstm_anomaly'] = False
+        city_df.iloc[10:, city_df.columns.get_loc('lstm_anomaly')] = lstm_flags
+    else:
+        city_df['lstm_anomaly'] = False
 else:
+    st.warning("TensorFlow not installed → LSTM disabled")
     city_df['lstm_anomaly'] = False
 
 # -------------------------------
-# GRAPH: ALL MODELS
+# GRAPH: MODEL COMPARISON
 # -------------------------------
 st.subheader("📊 Model Comparison")
 
@@ -138,12 +144,12 @@ st.plotly_chart(fig, use_container_width=True)
 # -------------------------------
 # EVALUATION
 # -------------------------------
+st.subheader("📊 Model Evaluation")
+
 threshold_gt = city_df['AQI'].quantile(0.95)
 city_df['ground_truth'] = city_df['AQI'] > threshold_gt
 
 models = ['z_anomaly','iso_anomaly','knn_anomaly','lof_anomaly','lstm_anomaly']
-
-st.subheader("📊 Model Evaluation")
 
 for m in models:
     y_true = city_df['ground_truth'].astype(int)
@@ -154,3 +160,13 @@ for m in models:
     f = f1_score(y_true, y_pred, zero_division=0)
 
     st.write(f"{m}: Precision={p:.2f}, Recall={r:.2f}, F1={f:.2f}")
+
+# -------------------------------
+# INSIGHTS
+# -------------------------------
+st.subheader("💡 Insights")
+
+st.write(f"City: {city}")
+st.write(f"Average AQI: {city_df['AQI'].mean():.2f}")
+st.write(f"Max AQI: {city_df['AQI'].max()}")
+st.write(f"Isolation Forest anomalies: {city_df['iso_anomaly'].sum()}")
