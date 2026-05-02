@@ -10,49 +10,39 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 from pyod.models.knn import KNN
 from pyod.models.lof import LOF
 
-# OPTIONAL TensorFlow (SAFE FIX)
-try:
-    from tensorflow.keras.models import Model
-    from tensorflow.keras.layers import Input, LSTM, RepeatVector
-    tf_available = True
-except:
-    tf_available = False
-
 # -------------------------------
 # CONFIG
 # -------------------------------
-st.set_page_config(page_title="Advanced AQI Anomaly Detection", layout="wide")
-st.title("🚀 Advanced Time Series Anomaly Detection")
+st.set_page_config(page_title="AQI Advanced App", layout="wide")
+st.title("🌫️ Advanced AQI Anomaly Detection")
 
 # -------------------------------
 # LOAD DATA
 # -------------------------------
+@st.cache_data
+def load_data(file):
+    if file:
+        return pd.read_csv(file, parse_dates=['Date'])
+    return pd.read_csv("city_day.csv", parse_dates=['Date'])
+
 uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
+df = load_data(uploaded_file)
 
-if uploaded_file:
-    df = pd.read_csv(uploaded_file, parse_dates=['Date'])
-else:
-    df = pd.read_csv("city_day.csv", parse_dates=['Date'])
-
-df = df.sort_values(['City', 'Date'])
+df = df.sort_values(['City', 'Date']).reset_index(drop=True)
 
 # -------------------------------
-# SELECT CITY
+# SINGLE PIPELINE (IMPORTANT)
 # -------------------------------
 city = st.sidebar.selectbox("Select City", df['City'].unique())
 
 city_df = df[df['City'] == city].copy()
+
+# CLEAN
 city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
 city_df['AQI'] = city_df['AQI'].ffill().bfill()
 
 # -------------------------------
-# SCALING
-# -------------------------------
-scaler = StandardScaler()
-scaled = scaler.fit_transform(city_df[['AQI']])
-
-# -------------------------------
-# 1. Z-SCORE
+# FEATURES
 # -------------------------------
 city_df['mean'] = city_df['AQI'].rolling(30, min_periods=10).mean()
 city_df['std'] = city_df['AQI'].rolling(30, min_periods=10).std()
@@ -61,14 +51,14 @@ city_df['z'] = (city_df['AQI'] - city_df['mean']) / city_df['std']
 city_df['z_anomaly'] = np.abs(city_df['z']) > 3
 
 # -------------------------------
-# 2. ISOLATION FOREST
+# ML MODELS
 # -------------------------------
+scaler = StandardScaler()
+scaled = scaler.fit_transform(city_df[['AQI']])
+
 iso = IsolationForest(contamination=0.05, random_state=42)
 city_df['iso_anomaly'] = iso.fit_predict(scaled) == -1
 
-# -------------------------------
-# 3. PYOD MODELS
-# -------------------------------
 knn = KNN(contamination=0.05)
 lof = LOF(contamination=0.05)
 
@@ -76,56 +66,30 @@ city_df['knn_anomaly'] = knn.fit_predict(scaled) == 1
 city_df['lof_anomaly'] = lof.fit_predict(scaled) == 1
 
 # -------------------------------
-# 4. LSTM AUTOENCODER (OPTIONAL)
+# GRAPH 1: TREND
 # -------------------------------
-def create_sequences(data, window=10):
-    X = []
-    for i in range(len(data) - window):
-        X.append(data[i:i+window])
-    return np.array(X)
+st.subheader("📈 AQI Trend")
 
-if tf_available:
-    seq_data = create_sequences(scaled)
+fig1 = go.Figure()
+fig1.add_trace(go.Scatter(x=city_df['Date'], y=city_df['AQI'], name='AQI'))
 
-    if len(seq_data) > 50:
-        inputs = Input(shape=(seq_data.shape[1], seq_data.shape[2]))
-        encoded = LSTM(32, activation='relu')(inputs)
-        decoded = RepeatVector(seq_data.shape[1])(encoded)
-        decoded = LSTM(32, activation='relu', return_sequences=True)(decoded)
-
-        model = Model(inputs, decoded)
-        model.compile(optimizer='adam', loss='mse')
-        model.fit(seq_data, seq_data, epochs=3, batch_size=32, verbose=0)
-
-        recon = model.predict(seq_data)
-        loss = np.mean(np.abs(recon - seq_data), axis=(1,2))
-
-        threshold = np.percentile(loss, 95)
-        lstm_flags = loss > threshold
-
-        city_df['lstm_anomaly'] = False
-        city_df.iloc[10:, city_df.columns.get_loc('lstm_anomaly')] = lstm_flags
-    else:
-        city_df['lstm_anomaly'] = False
-else:
-    st.warning("TensorFlow not installed → LSTM disabled")
-    city_df['lstm_anomaly'] = False
+st.plotly_chart(fig1, use_container_width=True)
 
 # -------------------------------
-# GRAPH: MODEL COMPARISON
+# GRAPH 2: ANOMALIES
 # -------------------------------
-st.subheader("📊 Model Comparison")
+st.subheader("🔍 Model Comparison")
 
-fig = go.Figure()
+fig2 = go.Figure()
 
-fig.add_trace(go.Scatter(
+fig2.add_trace(go.Scatter(
     x=city_df['Date'],
     y=city_df['AQI'],
     name='AQI'
 ))
 
 def add_points(col, color, name):
-    fig.add_trace(go.Scatter(
+    fig2.add_trace(go.Scatter(
         x=city_df[city_df[col]]['Date'],
         y=city_df[city_df[col]]['AQI'],
         mode='markers',
@@ -137,9 +101,8 @@ add_points('z_anomaly', 'orange', 'Z-score')
 add_points('iso_anomaly', 'red', 'Isolation Forest')
 add_points('knn_anomaly', 'green', 'KNN')
 add_points('lof_anomaly', 'purple', 'LOF')
-add_points('lstm_anomaly', 'black', 'LSTM')
 
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig2, use_container_width=True)
 
 # -------------------------------
 # EVALUATION
@@ -149,7 +112,7 @@ st.subheader("📊 Model Evaluation")
 threshold_gt = city_df['AQI'].quantile(0.95)
 city_df['ground_truth'] = city_df['AQI'] > threshold_gt
 
-models = ['z_anomaly','iso_anomaly','knn_anomaly','lof_anomaly','lstm_anomaly']
+models = ['z_anomaly','iso_anomaly','knn_anomaly','lof_anomaly']
 
 for m in models:
     y_true = city_df['ground_truth'].astype(int)
@@ -159,14 +122,26 @@ for m in models:
     r = recall_score(y_true, y_pred, zero_division=0)
     f = f1_score(y_true, y_pred, zero_division=0)
 
-    st.write(f"{m}: Precision={p:.2f}, Recall={r:.2f}, F1={f:.2f}")
+    st.write(f"{m} → Precision={p:.2f}, Recall={r:.2f}, F1={f:.2f}")
 
 # -------------------------------
 # INSIGHTS
 # -------------------------------
 st.subheader("💡 Insights")
 
+avg = city_df['AQI'].mean()
+max_val = city_df['AQI'].max()
+
 st.write(f"City: {city}")
-st.write(f"Average AQI: {city_df['AQI'].mean():.2f}")
-st.write(f"Max AQI: {city_df['AQI'].max()}")
-st.write(f"Isolation Forest anomalies: {city_df['iso_anomaly'].sum()}")
+st.write(f"Average AQI: {avg:.2f}")
+st.write(f"Max AQI: {max_val}")
+st.write(f"Total anomalies: {city_df['iso_anomaly'].sum()}")
+
+if max_val > 300:
+    st.error("Severe pollution spikes 🚨")
+elif avg > 200:
+    st.error("Unhealthy air quality")
+elif avg > 100:
+    st.warning("Moderate pollution")
+else:
+    st.success("Good air quality")
