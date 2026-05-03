@@ -44,7 +44,7 @@ city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
 city_df['AQI'] = city_df['AQI'].ffill().bfill()
 
 # -------------------------------
-# FEATURES
+# FEATURE ENGINEERING
 # -------------------------------
 city_df['mean'] = city_df['AQI'].rolling(30, min_periods=10).mean()
 city_df['std'] = city_df['AQI'].rolling(30, min_periods=10).std()
@@ -53,7 +53,7 @@ city_df['z'] = (city_df['AQI'] - city_df['mean']) / city_df['std']
 city_df['z_anomaly'] = np.abs(city_df['z']) > 3
 
 # -------------------------------
-# MODELS
+# ML MODELS
 # -------------------------------
 scaler = StandardScaler()
 scaled = scaler.fit_transform(city_df[['AQI']])
@@ -68,13 +68,13 @@ city_df['knn_anomaly'] = knn.fit_predict(scaled) == 1
 city_df['lof_anomaly'] = lof.fit_predict(scaled) == 1
 
 # -------------------------------
-# EXPLANATION
+# EXPLANATION FUNCTIONS
 # -------------------------------
 def get_reason(row):
     if pd.isna(row['mean']) or pd.isna(row['std']):
         return "Insufficient data"
     elif row['AQI'] > row['mean'] + 2 * row['std']:
-        return "High pollution spike (traffic/weather impact)"
+        return "High pollution spike (traffic/weather)"
     elif row['AQI'] < row['mean'] - 2 * row['std']:
         return "Sudden drop (rain/clean air)"
     else:
@@ -178,10 +178,8 @@ with tab3:
     for m in models:
         y_true = city_df['ground_truth'].astype(int)
         y_pred = city_df[m].astype(int)
-
         f1 = f1_score(y_true, y_pred, zero_division=0)
         scores[m] = f1
-
         st.write(f"{m} → F1 Score: {f1:.2f}")
 
     best_model = max(scores, key=scores.get)
@@ -196,7 +194,7 @@ with tab3:
     st.plotly_chart(fig_bar, use_container_width=True)
 
 # -------------------------------
-# TAB 4: INSIGHTS (FINAL FIX)
+# TAB 4: INSIGHTS (FIXED)
 # -------------------------------
 with tab4:
     st.subheader("💡 Smart Insights")
@@ -212,7 +210,7 @@ with tab4:
     st.write(f"Current Condition: **{aqi_category(latest)}**")
     st.write(f"Worst Recorded: **{aqi_category(max_val)}**")
 
-    # 🔴 CURRENT CONDITION ALERT
+    # CURRENT CONDITION ALERT
     if latest > 200:
         st.error("🚨 Current air quality is VERY BAD")
     elif latest > 150:
@@ -222,21 +220,19 @@ with tab4:
     else:
         st.success("Air quality is acceptable")
 
-    # 🔴 HISTORICAL ALERT
+    # HISTORICAL ALERT
     if max_val > 200:
         st.error("🚨 Severe pollution occurred in the past")
     elif max_val > 150:
         st.warning("⚠️ Pollution spikes occurred in the past")
 
-    # Dangerous days
+    # EXTRA INSIGHTS
     danger_days = len(city_df[city_df['AQI'] > 150])
     st.write(f"Days with unhealthy AQI (>150): {danger_days}")
 
-    # Anomaly count
     anomaly_count = city_df['iso_anomaly'].sum()
     st.write(f"Total anomalies detected: {anomaly_count}")
 
-    # Recent anomalies
     st.markdown("### 🧠 Recent Anomalies")
     recent = city_df[city_df['iso_anomaly']].tail(5)
 
@@ -249,7 +245,6 @@ with tab4:
                 f"({row['severity']}) because {row['reason']}"
             )
 
-    # Impact
     st.markdown("### 🌍 Impact")
     st.markdown("""
     - Detects pollution spikes early  
