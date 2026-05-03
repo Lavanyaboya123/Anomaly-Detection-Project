@@ -32,10 +32,22 @@ df = load_data(uploaded_file)
 df = df.sort_values(['City', 'Date']).reset_index(drop=True)
 
 # -------------------------------
-# SELECT CITY
+# 📍 CITY SELECTION (TOP UI)
 # -------------------------------
-city = st.sidebar.selectbox("Select City", df['City'].unique())
+st.markdown("## 📍 Select City for Analysis")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    city = st.selectbox("Choose City", sorted(df['City'].unique()))
+
 city_df = df[df['City'] == city].copy()
+
+with col2:
+    st.metric("Total Records", len(city_df))
+
+with col3:
+    st.metric("Years Available", city_df['Date'].dt.year.nunique())
 
 # -------------------------------
 # CLEAN DATA
@@ -44,7 +56,7 @@ city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
 city_df['AQI'] = city_df['AQI'].ffill().bfill()
 
 # -------------------------------
-# FEATURE ENGINEERING
+# FEATURES
 # -------------------------------
 city_df['mean'] = city_df['AQI'].rolling(30, min_periods=10).mean()
 city_df['std'] = city_df['AQI'].rolling(30, min_periods=10).std()
@@ -53,7 +65,7 @@ city_df['z'] = (city_df['AQI'] - city_df['mean']) / city_df['std']
 city_df['z_anomaly'] = np.abs(city_df['z']) > 3
 
 # -------------------------------
-# ML MODELS
+# MODELS
 # -------------------------------
 scaler = StandardScaler()
 scaled = scaler.fit_transform(city_df[['AQI']])
@@ -68,7 +80,7 @@ city_df['knn_anomaly'] = knn.fit_predict(scaled) == 1
 city_df['lof_anomaly'] = lof.fit_predict(scaled) == 1
 
 # -------------------------------
-# EXPLANATION FUNCTIONS
+# EXPLANATION
 # -------------------------------
 def get_reason(row):
     if pd.isna(row['mean']) or pd.isna(row['std']):
@@ -194,7 +206,7 @@ with tab3:
     st.plotly_chart(fig_bar, use_container_width=True)
 
 # -------------------------------
-# TAB 4: INSIGHTS (FIXED)
+# TAB 4: INSIGHTS
 # -------------------------------
 with tab4:
     st.subheader("💡 Smart Insights")
@@ -210,7 +222,7 @@ with tab4:
     st.write(f"Current Condition: **{aqi_category(latest)}**")
     st.write(f"Worst Recorded: **{aqi_category(max_val)}**")
 
-    # CURRENT CONDITION ALERT
+    # ALERTS
     if latest > 200:
         st.error("🚨 Current air quality is VERY BAD")
     elif latest > 150:
@@ -220,46 +232,14 @@ with tab4:
     else:
         st.success("Air quality is acceptable")
 
-    # HISTORICAL ALERT
     if max_val > 200:
         st.error("🚨 Severe pollution occurred in the past")
     elif max_val > 150:
         st.warning("⚠️ Pollution spikes occurred in the past")
 
-    # EXTRA INSIGHTS
+    # EXTRA
     danger_days = len(city_df[city_df['AQI'] > 150])
     st.write(f"Days with unhealthy AQI (>150): {danger_days}")
 
     anomaly_count = city_df['iso_anomaly'].sum()
     st.write(f"Total anomalies detected: {anomaly_count}")
-
-    st.markdown("### 🧠 Recent Anomalies")
-    recent = city_df[city_df['iso_anomaly']].tail(5)
-
-    if len(recent) == 0:
-        st.info("No recent anomalies")
-    else:
-        for _, row in recent.iterrows():
-            st.write(
-                f"{row['Date'].date()} → AQI {row['AQI']} "
-                f"({row['severity']}) because {row['reason']}"
-            )
-
-    st.markdown("### 🌍 Impact")
-    st.markdown("""
-    - Detects pollution spikes early  
-    - Helps environmental monitoring  
-    - Supports smart city decisions  
-    """)
-
-# -------------------------------
-# DOWNLOAD
-# -------------------------------
-csv = city_df.to_csv(index=False).encode('utf-8')
-
-st.download_button(
-    "📥 Download Data",
-    data=csv,
-    file_name=f"{city}_aqi.csv",
-    mime='text/csv'
-)
