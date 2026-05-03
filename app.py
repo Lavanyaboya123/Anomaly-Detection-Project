@@ -94,6 +94,23 @@ city_df['reason'] = city_df.apply(get_reason, axis=1)
 city_df['severity'] = city_df.apply(get_severity, axis=1)
 
 # -------------------------------
+# AQI CATEGORY FUNCTION
+# -------------------------------
+def aqi_category(aqi):
+    if aqi <= 50:
+        return "Good"
+    elif aqi <= 100:
+        return "Satisfactory"
+    elif aqi <= 200:
+        return "Moderate"
+    elif aqi <= 300:
+        return "Poor"
+    elif aqi <= 400:
+        return "Very Poor"
+    else:
+        return "Severe"
+
+# -------------------------------
 # TABS
 # -------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -179,73 +196,55 @@ with tab3:
     st.plotly_chart(fig_bar, use_container_width=True)
 
 # -------------------------------
-# TAB 4: INSIGHTS (FIXED)
+# TAB 4: INSIGHTS (RED ALERT)
 # -------------------------------
 with tab4:
     st.subheader("💡 Smart Insights")
 
-    latest_aqi = city_df['AQI'].iloc[-1]
+    latest = city_df['AQI'].iloc[-1]
+    avg = city_df['AQI'].mean()
+    max_val = city_df['AQI'].max()
 
-    def aqi_category(aqi):
-        if aqi <= 50:
-            return "Good"
-        elif aqi <= 100:
-            return "Satisfactory"
-        elif aqi <= 200:
-            return "Moderate"
-        elif aqi <= 300:
-            return "Poor"
-        elif aqi <= 400:
-            return "Very Poor"
-        else:
-            return "Severe"
+    st.metric("Latest AQI", int(latest))
+    st.metric("Average AQI", int(avg))
+    st.metric("Worst AQI", int(max_val))
 
-    category = aqi_category(latest_aqi)
+    st.write(f"Current Condition: **{aqi_category(latest)}**")
+    st.write(f"Worst Recorded: **{aqi_category(max_val)}**")
 
-    st.metric("Latest AQI", int(latest_aqi))
-    st.write(f"Air Quality Category: **{category}**")
-
-    if category == "Good":
-        st.success("Air quality is good")
-    elif category == "Satisfactory":
-        st.info("Air quality is acceptable")
-    elif category == "Moderate":
-        st.warning("Air quality is moderate")
-    elif category in ["Poor", "Very Poor"]:
-        st.error("Air quality is unhealthy")
+    # 🔴 RED ALERT LOGIC
+    if latest > 300 or max_val > 300:
+        st.error("🚨 SEVERE POLLUTION ALERT!")
+    elif latest > 200 or max_val > 200:
+        st.error("⚠️ HIGH POLLUTION DETECTED!")
+    elif latest > 100:
+        st.warning("Moderate pollution levels")
     else:
-        st.error("Severe pollution 🚨")
+        st.success("Air quality is acceptable")
 
     # anomaly insight
     anomaly_count = city_df['iso_anomaly'].sum()
     st.write(f"Total anomalies detected: {anomaly_count}")
 
-    if anomaly_count > 20:
-        st.warning("Frequent pollution spikes detected")
-    elif anomaly_count > 5:
-        st.info("Occasional anomalies detected")
-    else:
-        st.success("Stable air quality pattern")
-
     # reasons
-    st.markdown("### 🧠 Why anomalies happen")
-    latest = city_df[city_df['iso_anomaly']].tail(5)
+    st.markdown("### 🧠 Recent Anomalies")
+    recent = city_df[city_df['iso_anomaly']].tail(5)
 
-    if len(latest) == 0:
+    if len(recent) == 0:
         st.info("No recent anomalies")
     else:
-        for _, row in latest.iterrows():
+        for _, row in recent.iterrows():
             st.write(
                 f"{row['Date'].date()} → AQI {row['AQI']} "
                 f"({row['severity']}) because {row['reason']}"
             )
 
     # impact
-    st.markdown("### 🌍 Real-world impact")
+    st.markdown("### 🌍 Impact")
     st.markdown("""
-    - Helps detect pollution spikes early  
-    - Useful for smart city monitoring  
-    - Supports environmental decision-making  
+    - Detects pollution spikes early  
+    - Helps environmental monitoring  
+    - Supports smart city decisions  
     """)
 
 # -------------------------------
