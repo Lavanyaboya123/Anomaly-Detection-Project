@@ -26,37 +26,25 @@ def load_data(file):
         return pd.read_csv(file, parse_dates=['Date'])
     return pd.read_csv("city_day.csv", parse_dates=['Date'])
 
-uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
+uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 df = load_data(uploaded_file)
 
 df = df.sort_values(['City', 'Date']).reset_index(drop=True)
 
 # -------------------------------
-# 📍 CITY SELECTION (MAIN PAGE)
+# 📍 CITY SELECTION (MAIN PAGE)  ✅ CHANGED
 # -------------------------------
 st.markdown("## 📍 Select City")
 
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    city = st.selectbox("Choose City", sorted(df['City'].unique()))
+city = st.selectbox("Choose City", df['City'].unique())
 
 city_df = df[df['City'] == city].copy()
 
-with col2:
-    st.metric("Records", len(city_df))
-
-with col3:
-    st.metric("Years", city_df['Date'].dt.year.nunique())
-
 # -------------------------------
-# CLEAN DATA (FIXED)
+# CLEAN DATA
 # -------------------------------
 city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
 city_df['AQI'] = city_df['AQI'].ffill().bfill()
-
-# ✅ IMPORTANT FIX: remove unrealistic AQI values
-city_df['AQI'] = city_df['AQI'].clip(0, 500)
 
 # -------------------------------
 # FEATURES
@@ -89,9 +77,9 @@ def get_reason(row):
     if pd.isna(row['mean']) or pd.isna(row['std']):
         return "Insufficient data"
     elif row['AQI'] > row['mean'] + 2 * row['std']:
-        return "High pollution spike"
+        return "High pollution spike (traffic/weather impact)"
     elif row['AQI'] < row['mean'] - 2 * row['std']:
-        return "Sudden drop"
+        return "Sudden drop (rain/clean air)"
     else:
         return "Normal variation"
 
@@ -211,7 +199,7 @@ with tab3:
     st.plotly_chart(fig_bar, use_container_width=True)
 
 # -------------------------------
-# TAB 4: INSIGHTS (FINAL)
+# TAB 4: INSIGHTS
 # -------------------------------
 with tab4:
     st.subheader("💡 Smart Insights")
@@ -224,47 +212,25 @@ with tab4:
     st.metric("Average AQI", int(avg))
     st.metric("Worst AQI", int(max_val))
 
-    st.write(f"Current: **{aqi_category(latest)}**")
-    st.write(f"Worst: **{aqi_category(max_val)}**")
+    st.write(f"Current Condition: **{aqi_category(latest)}**")
+    st.write(f"Worst Recorded: **{aqi_category(max_val)}**")
+
+    if latest > 200:
+        st.error("🚨 Current air quality is VERY BAD")
+    elif latest > 150:
+        st.warning("⚠️ Current air quality is poor")
+    elif latest > 100:
+        st.warning("Moderate pollution")
+    else:
+        st.success("Air quality is acceptable")
+
+    if max_val > 200:
+        st.error("🚨 Severe pollution occurred in the past")
+    elif max_val > 150:
+        st.warning("⚠️ Pollution spikes occurred in the past")
 
     danger_days = len(city_df[city_df['AQI'] > 150])
+    st.write(f"Days with unhealthy AQI (>150): {danger_days}")
+
     anomaly_count = city_df['iso_anomaly'].sum()
-
-    # ✅ BALANCED ALERT SYSTEM
-    if latest > 200:
-        st.error("🚨 Current air quality is dangerous")
-    elif max_val > 300 and danger_days > 20:
-        st.error("🚨 Frequent severe pollution detected")
-    elif latest > 150 or danger_days > 25:
-        st.warning("⚠️ Pollution levels are concerning")
-    elif anomaly_count > 30:
-        st.warning("⚠️ Unusual pollution patterns detected")
-    else:
-        st.success("✅ Air quality is relatively safe")
-
-    st.write(f"Danger Days (>150 AQI): {danger_days}")
-    st.write(f"Total anomalies: {anomaly_count}")
-
-    st.markdown("### 🧠 Recent Anomalies")
-    recent = city_df[city_df['iso_anomaly']].tail(5)
-
-    if len(recent) == 0:
-        st.info("No recent anomalies")
-    else:
-        for _, row in recent.iterrows():
-            st.write(
-                f"{row['Date'].date()} → AQI {row['AQI']} "
-                f"({row['severity']}) - {row['reason']}"
-            )
-
-# -------------------------------
-# DOWNLOAD
-# -------------------------------
-csv = city_df.to_csv(index=False).encode('utf-8')
-
-st.download_button(
-    "📥 Download Data",
-    data=csv,
-    file_name=f"{city}_aqi.csv",
-    mime='text/csv'
-)
+    st.write(f"Total anomalies detected: {anomaly_count}")
