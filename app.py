@@ -94,7 +94,7 @@ city_df['reason'] = city_df.apply(get_reason, axis=1)
 city_df['severity'] = city_df.apply(get_severity, axis=1)
 
 # -------------------------------
-# AQI CATEGORY FUNCTION
+# AQI CATEGORY
 # -------------------------------
 def aqi_category(aqi):
     if aqi <= 50:
@@ -196,7 +196,7 @@ with tab3:
     st.plotly_chart(fig_bar, use_container_width=True)
 
 # -------------------------------
-# TAB 4: INSIGHTS (RED ALERT)
+# TAB 4: INSIGHTS (FIXED)
 # -------------------------------
 with tab4:
     st.subheader("💡 Smart Insights")
@@ -212,17 +212,21 @@ with tab4:
     st.write(f"Current Condition: **{aqi_category(latest)}**")
     st.write(f"Worst Recorded: **{aqi_category(max_val)}**")
 
-    # 🔴 RED ALERT LOGIC
-    if latest > 300 or max_val > 300:
-        st.error("🚨 SEVERE POLLUTION ALERT!")
-    elif latest > 200 or max_val > 200:
-        st.error("⚠️ HIGH POLLUTION DETECTED!")
+    # 🔴 REALISTIC ALERT SYSTEM
+    if latest > 200 or max_val > 200:
+        st.error("🚨 HIGH POLLUTION ALERT!")
+    elif latest > 150 or max_val > 150:
+        st.warning("⚠️ Pollution is getting serious")
     elif latest > 100:
-        st.warning("Moderate pollution levels")
+        st.warning("Moderate pollution detected")
     else:
         st.success("Air quality is acceptable")
 
-    # anomaly insight
+    # dangerous days
+    danger_days = len(city_df[city_df['AQI'] > 150])
+    st.write(f"Days with unhealthy AQI (>150): {danger_days}")
+
+    # anomaly count
     anomaly_count = city_df['iso_anomaly'].sum()
     st.write(f"Total anomalies detected: {anomaly_count}")
 
