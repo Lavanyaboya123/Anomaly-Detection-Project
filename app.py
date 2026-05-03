@@ -196,7 +196,7 @@ with tab3:
     st.plotly_chart(fig_bar, use_container_width=True)
 
 # -------------------------------
-# TAB 4: INSIGHTS (FIXED)
+# TAB 4: INSIGHTS (FINAL FIX)
 # -------------------------------
 with tab4:
     st.subheader("💡 Smart Insights")
@@ -212,25 +212,31 @@ with tab4:
     st.write(f"Current Condition: **{aqi_category(latest)}**")
     st.write(f"Worst Recorded: **{aqi_category(max_val)}**")
 
-    # 🔴 REALISTIC ALERT SYSTEM
-    if latest > 200 or max_val > 200:
-        st.error("🚨 HIGH POLLUTION ALERT!")
-    elif latest > 150 or max_val > 150:
-        st.warning("⚠️ Pollution is getting serious")
+    # 🔴 CURRENT CONDITION ALERT
+    if latest > 200:
+        st.error("🚨 Current air quality is VERY BAD")
+    elif latest > 150:
+        st.warning("⚠️ Current air quality is poor")
     elif latest > 100:
-        st.warning("Moderate pollution detected")
+        st.warning("Moderate pollution")
     else:
         st.success("Air quality is acceptable")
 
-    # dangerous days
+    # 🔴 HISTORICAL ALERT
+    if max_val > 200:
+        st.error("🚨 Severe pollution occurred in the past")
+    elif max_val > 150:
+        st.warning("⚠️ Pollution spikes occurred in the past")
+
+    # Dangerous days
     danger_days = len(city_df[city_df['AQI'] > 150])
     st.write(f"Days with unhealthy AQI (>150): {danger_days}")
 
-    # anomaly count
+    # Anomaly count
     anomaly_count = city_df['iso_anomaly'].sum()
     st.write(f"Total anomalies detected: {anomaly_count}")
 
-    # reasons
+    # Recent anomalies
     st.markdown("### 🧠 Recent Anomalies")
     recent = city_df[city_df['iso_anomaly']].tail(5)
 
@@ -243,7 +249,7 @@ with tab4:
                 f"({row['severity']}) because {row['reason']}"
             )
 
-    # impact
+    # Impact
     st.markdown("### 🌍 Impact")
     st.markdown("""
     - Detects pollution spikes early  
