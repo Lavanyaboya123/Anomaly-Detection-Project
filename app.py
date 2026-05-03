@@ -32,25 +32,13 @@ df = load_data(uploaded_file)
 df = df.sort_values(['City', 'Date']).reset_index(drop=True)
 
 # -------------------------------
-# CITY SELECTOR (TOP)
+# SELECT CITY
 # -------------------------------
-st.markdown("## 📍 Select City")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    city = st.selectbox("Choose City", sorted(df['City'].unique()))
-
+city = st.sidebar.selectbox("Select City", df['City'].unique())
 city_df = df[df['City'] == city].copy()
 
-with col2:
-    st.metric("Records", len(city_df))
-
-with col3:
-    st.metric("Years", city_df['Date'].dt.year.nunique())
-
 # -------------------------------
-# CLEAN
+# CLEAN DATA
 # -------------------------------
 city_df['AQI'] = pd.to_numeric(city_df['AQI'], errors='coerce')
 city_df['AQI'] = city_df['AQI'].ffill().bfill()
@@ -86,9 +74,9 @@ def get_reason(row):
     if pd.isna(row['mean']) or pd.isna(row['std']):
         return "Insufficient data"
     elif row['AQI'] > row['mean'] + 2 * row['std']:
-        return "High pollution spike"
+        return "High pollution spike (traffic/weather impact)"
     elif row['AQI'] < row['mean'] - 2 * row['std']:
-        return "Sudden drop"
+        return "Sudden drop (rain/clean air)"
     else:
         return "Normal variation"
 
@@ -133,17 +121,21 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 # -------------------------------
-# TREND
+# TAB 1: TREND
 # -------------------------------
 with tab1:
+    st.subheader(f"AQI Trend - {city}")
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=city_df['Date'], y=city_df['AQI'], name='AQI'))
     st.plotly_chart(fig, use_container_width=True)
 
 # -------------------------------
-# ANOMALIES
+# TAB 2: ANOMALIES
 # -------------------------------
 with tab2:
+    st.subheader("Detected Anomalies")
+
     fig2 = go.Figure()
     fig2.add_trace(go.Scatter(x=city_df['Date'], y=city_df['AQI'], name='AQI'))
 
@@ -164,15 +156,19 @@ with tab2:
             "<b>Severity:</b> %{customdata}<extra></extra>"
         ))
 
-    add_points('iso_anomaly', 'red', 'Isolation Forest')
     add_points('z_anomaly', 'orange', 'Z-score')
+    add_points('iso_anomaly', 'red', 'Isolation Forest')
+    add_points('knn_anomaly', 'green', 'KNN')
+    add_points('lof_anomaly', 'purple', 'LOF')
 
     st.plotly_chart(fig2, use_container_width=True)
 
 # -------------------------------
-# MODELS
+# TAB 3: MODEL COMPARISON
 # -------------------------------
 with tab3:
+    st.subheader("Model Evaluation")
+
     threshold = city_df['AQI'].quantile(0.95)
     city_df['ground_truth'] = city_df['AQI'] > threshold
 
@@ -182,49 +178,93 @@ with tab3:
     for m in models:
         y_true = city_df['ground_truth'].astype(int)
         y_pred = city_df[m].astype(int)
-        scores[m] = f1_score(y_true, y_pred, zero_division=0)
-        st.write(f"{m} → F1 Score: {scores[m]:.2f}")
 
-    st.success(f"Best Model: {max(scores, key=scores.get)}")
+        f1 = f1_score(y_true, y_pred, zero_division=0)
+        scores[m] = f1
+
+        st.write(f"{m} → F1 Score: {f1:.2f}")
+
+    best_model = max(scores, key=scores.get)
+    st.success(f"🏆 Best Model: {best_model}")
+
+    df_scores = pd.DataFrame({
+        "Model": list(scores.keys()),
+        "F1 Score": list(scores.values())
+    })
+
+    fig_bar = px.bar(df_scores, x="Model", y="F1 Score", color="Model")
+    st.plotly_chart(fig_bar, use_container_width=True)
 
 # -------------------------------
-# 💡 INSIGHTS (STRONG ALERT FIX)
+# TAB 4: INSIGHTS (FINAL FIX)
 # -------------------------------
 with tab4:
+    st.subheader("💡 Smart Insights")
+
     latest = city_df['AQI'].iloc[-1]
     avg = city_df['AQI'].mean()
     max_val = city_df['AQI'].max()
 
-    anomaly_count = city_df['iso_anomaly'].sum()
-    danger_days = len(city_df[city_df['AQI'] > 150])
-
     st.metric("Latest AQI", int(latest))
+    st.metric("Average AQI", int(avg))
     st.metric("Worst AQI", int(max_val))
-    st.metric("Danger Days", danger_days)
 
-    st.write(f"Current: **{aqi_category(latest)}**")
-    st.write(f"Worst: **{aqi_category(max_val)}**")
+    st.write(f"Current Condition: **{aqi_category(latest)}**")
+    st.write(f"Worst Recorded: **{aqi_category(max_val)}**")
 
-    # 🔴 FINAL ALERT LOGIC
-    if (
-        latest > 200 or
-        max_val > 300 or
-        anomaly_count > 20 or
-        danger_days > 30
-    ):
-        st.error("🚨 RED ALERT: Pollution risk detected!")
-
-    elif latest > 150 or max_val > 200:
-        st.warning("⚠️ Pollution is concerning")
-
+    # 🔴 CURRENT CONDITION ALERT
+    if latest > 200:
+        st.error("🚨 Current air quality is VERY BAD")
+    elif latest > 150:
+        st.warning("⚠️ Current air quality is poor")
+    elif latest > 100:
+        st.warning("Moderate pollution")
     else:
-        st.success("✅ Air quality is relatively safe")
+        st.success("Air quality is acceptable")
 
-    st.markdown("### Recent Anomalies")
+    # 🔴 HISTORICAL ALERT
+    if max_val > 200:
+        st.error("🚨 Severe pollution occurred in the past")
+    elif max_val > 150:
+        st.warning("⚠️ Pollution spikes occurred in the past")
+
+    # Dangerous days
+    danger_days = len(city_df[city_df['AQI'] > 150])
+    st.write(f"Days with unhealthy AQI (>150): {danger_days}")
+
+    # Anomaly count
+    anomaly_count = city_df['iso_anomaly'].sum()
+    st.write(f"Total anomalies detected: {anomaly_count}")
+
+    # Recent anomalies
+    st.markdown("### 🧠 Recent Anomalies")
     recent = city_df[city_df['iso_anomaly']].tail(5)
 
-    for _, row in recent.iterrows():
-        st.write(
-            f"{row['Date'].date()} → AQI {row['AQI']} "
-            f"({row['severity']}) - {row['reason']}"
-        )
+    if len(recent) == 0:
+        st.info("No recent anomalies")
+    else:
+        for _, row in recent.iterrows():
+            st.write(
+                f"{row['Date'].date()} → AQI {row['AQI']} "
+                f"({row['severity']}) because {row['reason']}"
+            )
+
+    # Impact
+    st.markdown("### 🌍 Impact")
+    st.markdown("""
+    - Detects pollution spikes early  
+    - Helps environmental monitoring  
+    - Supports smart city decisions  
+    """)
+
+# -------------------------------
+# DOWNLOAD
+# -------------------------------
+csv = city_df.to_csv(index=False).encode('utf-8')
+
+st.download_button(
+    "📥 Download Data",
+    data=csv,
+    file_name=f"{city}_aqi.csv",
+    mime='text/csv'
+)
